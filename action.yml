@@ -12,7 +12,7 @@ inputs:
     required: false
     default: "."
   subject:
-    description: "Organisation name printed on the report and any certificate."
+    description: "Organization name printed on the report and any certificate."
     required: false
     default: ""
   license-key:

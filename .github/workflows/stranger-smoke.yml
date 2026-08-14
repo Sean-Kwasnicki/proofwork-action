@@ -1,0 +1,21 @@
+name: stranger-smoke
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: Sean-Kwasnicki/proofwork-action@v1
+        with:
+          root: smoke-app
+          subject: "Stranger Test LLC"
+          comment: "false"
+          fail-on: "denied"
