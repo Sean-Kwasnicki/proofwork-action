@@ -1,0 +1,173 @@
+name: "Proofwork"
+description: "Independent gate for AI-agent repositories. Blocks a merge when the agent's work is not what it claims."
+author: "Proofwork"
+
+branding:
+  icon: "shield"
+  color: "green"
+
+inputs:
+  root:
+    description: "Directory to grade. Defaults to the checked-out repository."
+    required: false
+    default: "."
+  subject:
+    description: "Organisation name printed on the report and any certificate."
+    required: false
+    default: ""
+  license-key:
+    description: >-
+      Proofwork licence key. Without one the run uses the free gate, which
+      returns a verdict but withholds the findings. Store it as a repository
+      secret — never inline in the workflow.
+    required: false
+    default: ""
+  fail-on:
+    description: >-
+      When to fail the job. "denied" (default) fails only on a blocking finding.
+      "any" also fails on warnings. "never" reports without blocking, for teams
+      introducing the gate to an existing codebase.
+    required: false
+    default: "denied"
+  comment:
+    description: "Post the report card as a pull-request comment. Needs pull-requests: write."
+    required: false
+    default: "true"
+  out:
+    description: "Directory for artifacts. Written outside the graded tree."
+    required: false
+    default: "proofwork-out"
+
+outputs:
+  verdict:
+    description: "PASS or FAIL."
+    value: ${{ steps.gate.outputs.verdict }}
+  score:
+    description: "Integrity score out of 100."
+    value: ${{ steps.gate.outputs.score }}
+  report:
+    description: "Path to the rendered report card."
+    value: ${{ steps.gate.outputs.report }}
+
+runs:
+  using: "composite"
+  steps:
+    # No build step, and no source to build.
+    #
+    # This distribution ships compiled JavaScript — no TypeScript source, no
+    # declaration files, no source maps. The gate runs on your runner, reads your
+    # code where it already is, and reports a verdict. Nothing is uploaded, and
+    # the run writes nothing into your tree.
+    - name: Prepare
+      shell: bash
+      run: |
+        set -euo pipefail
+        test -f "${{ github.action_path }}/dist/cli.js" || {
+          echo "::error::This Proofwork Action is incomplete — dist/cli.js is missing."
+          exit 1
+        }
+        mkdir -p "${{ inputs.out }}"
+
+    # Grading must not modify the repository it is grading. In CI this also keeps
+    # `git status` clean for any later step that inspects the tree.
+    - name: Run Proofwork
+      id: gate
+      shell: bash
+      env:
+        PROOFWORK_READONLY: "1"
+        PROOFWORK_LICENSE: ${{ inputs.license-key }}
+      run: |
+        set -uo pipefail
+        node "${{ github.action_path }}/dist/cli.js" report \
+          --root "${{ inputs.root }}" \
+          ${{ inputs.subject && format('--subject "{0}"', inputs.subject) || '' }} \
+          --json > "${{ inputs.out }}/report.json" 2>"${{ inputs.out }}/report.err" || true
+
+        node "${{ github.action_path }}/dist/cli.js" report \
+          --root "${{ inputs.root }}" \
+          ${{ inputs.subject && format('--subject "{0}"', inputs.subject) || '' }} \
+          | tee "${{ inputs.out }}/report.txt"
+        code=${PIPESTATUS[0]}
+
+        # Exit 0 = pass, 2 = findings, anything else = the gate itself failed.
+        # Those are three different situations and collapsing them would report a
+        # crashed run as a clean one.
+        if [ "$code" = "0" ]; then verdict=PASS
+        elif [ "$code" = "2" ]; then verdict=FAIL
+        else
+          echo "::error::Proofwork exited $code — the gate did not complete."
+          exit 1
+        fi
+
+        score=$(node -e "try{const r=require('${{ inputs.out }}/report.json');console.log(r.overall?.score??0)}catch{console.log(0)}")
+        echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
+        echo "score=$score" >> "$GITHUB_OUTPUT"
+        echo "report=${{ inputs.out }}/report.txt" >> "$GITHUB_OUTPUT"
+
+    - name: Job summary
+      shell: bash
+      if: always()
+      run: |
+        {
+          echo "## Proofwork — ${{ steps.gate.outputs.verdict }} (${{ steps.gate.outputs.score }}/100)"
+          echo ""
+          echo '```'
+          cat "${{ inputs.out }}/report.txt" 2>/dev/null || echo "no report produced"
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Comment on the pull request
+      if: ${{ inputs.comment == 'true' && github.event_name == 'pull_request' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        # A single updated comment rather than one per push. A gate that adds a
+        # comment to every commit gets muted, and a muted gate blocks nothing.
+        body_file="${{ inputs.out }}/comment.md"
+        {
+          echo "<!-- proofwork-report -->"
+          echo "### Proofwork — ${{ steps.gate.outputs.verdict }} · ${{ steps.gate.outputs.score }}/100"
+          echo ""
+          echo '```'
+          cat "${{ inputs.out }}/report.txt" 2>/dev/null || echo "no report produced"
+          echo '```'
+        } > "$body_file"
+
+        existing=$(gh pr view "${{ github.event.pull_request.number }}" --json comments \
+          --jq '.comments[] | select(.body | startswith("<!-- proofwork-report -->")) | .id' 2>/dev/null | head -n1)
+
+        if [ -n "$existing" ]; then
+          gh api -X PATCH "repos/${{ github.repository }}/issues/comments/$existing" \
+            -f body="$(cat "$body_file")" >/dev/null
+        else
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file "$body_file"
+        fi
+
+    - name: Upload artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: proofwork-report
+        path: ${{ inputs.out }}
+        if-no-files-found: warn
+
+    - name: Enforce
+      shell: bash
+      run: |
+        verdict="${{ steps.gate.outputs.verdict }}"
+        case "${{ inputs.fail-on }}" in
+          never)
+            echo "fail-on=never — reporting only."
+            ;;
+          any|denied)
+            if [ "$verdict" = "FAIL" ]; then
+              echo "::error::Proofwork DENIED this change. See the report card above."
+              exit 1
+            fi
+            ;;
+          *)
+            echo "::error::Unknown fail-on value '${{ inputs.fail-on }}'. Use denied, any, or never."
+            exit 1
+            ;;
+        esac

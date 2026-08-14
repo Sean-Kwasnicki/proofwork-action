@@ -1,0 +1,7 @@
+{
+  "name": "proofwork-action",
+  "version": "0.11.0",
+  "private": true,
+  "type": "module",
+  "description": "Proofwork — independent merge gate for AI agent code. Compiled distribution."
+}
