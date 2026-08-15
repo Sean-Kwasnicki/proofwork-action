@@ -319,9 +319,28 @@ export function countAssertions(checks) {
 export function assertionsRun(checks) {
     return countAssertions(checks.filter((c) => c.status !== "skip"));
 }
-const bandFor = (score, hasConsentFinding) => {
+/**
+ * Which band a run lands in.
+ *
+ * `gatePassed` is not decoration. The score is an arithmetic summary of findings
+ * weighted by severity, and it can sit comfortably above 85 while the run itself
+ * has a blocking failure — a repository that could not be read, a single hard
+ * finding in an otherwise clean tree. The card then said CERTIFIED while the gate
+ * exited 2.
+ *
+ * That combination is the exact failure this product sells itself on catching,
+ * printed on our own certificate: a headline verdict that contradicts the
+ * mechanism behind it. It also broke the commercial path silently, because CI
+ * deposits on the gate's verdict and never on the card's — so a customer could
+ * read CERTIFIED 91 on the report and never receive the certificate it named.
+ *
+ * A run the gate refused is not certified, whatever it scored.
+ */
+const bandFor = (score, hasConsentFinding, gatePassed) => {
     if (hasConsentFinding)
         return "denied";
+    if (!gatePassed)
+        return score >= 60 ? "provisional" : "denied";
     if (score >= 85)
         return "certified";
     if (score >= 60)
@@ -401,7 +420,7 @@ export function scoreProof(proof) {
         },
         severity_cap: severityCap,
         final,
-        band: bandFor(final, hasConsentFinding),
+        band: bandFor(final, hasConsentFinding, proof.ok),
         // The figure printed on customer-facing surfaces: what was evaluated here.
         assertions: assertionsRun(checks),
         // The catalogue size, kept so the difference is inspectable rather than lost.

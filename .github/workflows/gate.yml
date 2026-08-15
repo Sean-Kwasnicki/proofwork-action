@@ -92,26 +92,15 @@ jobs:
           # lowers the score for a reason nobody can see.
           fetch-depth: 0
 
-      # The Action looks for .git in the graded root. A subdirectory of a real
-      # clone (root: packages/api, or this repo's pass-app) is still that clone;
-      # without this pointer the run is DENIED for "not a git repository" even
-      # when every other check is clean, and a passing score never deposits.
-      - name: Attach repository git history to a subdirectory root
-        if: ${{ inputs.root != '.' && inputs.root != '' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          root="${{ inputs.root }}"
-          root="${root#./}"
-          if [ -e "$root/.git" ]; then
-            exit 0
-          fi
-          if [ ! -d .git ]; then
-            echo "No repository .git to attach."
-            exit 0
-          fi
-          printf 'gitdir: %s\n' "$(pwd)/.git" > "$root/.git"
-
+      # No git plumbing here on purpose. An earlier version wrote a gitdir
+      # pointer into the graded subdirectory to work around the engine failing
+      # git.repository outside a repository root. It worked and it was wrong: it
+      # made the whole clone visible to the grader, so a run scoped to one
+      # package drew findings from a sibling.
+      #
+      # The engine now walks up for .git the way git itself does, and scopes
+      # changed files to the graded directory. A subdirectory root needs nothing
+      # from this workflow.
       - name: Proofwork
         id: proofwork
         uses: Sean-Kwasnicki/proofwork-action@v1

@@ -60,6 +60,23 @@ process.env.PROOFWORK_REGISTRY_LOG = path.join(sandbox, "registry.jsonl");
  * `PROOFWORK_ISSUER_PUBKEY` override at its public half makes the suite
  * self-consistent and independent of whose machine it runs on.
  */
+/**
+ * No test may reach the mail provider.
+ *
+ * A billing test that forgot to inject a sender called the real Resend API,
+ * because `RESEND_API_KEY` is set in the operator's environment. It failed with
+ * a 403 only because the sending domain is still unverified — the moment that
+ * domain is verified, the same test would email a customer-shaped address for
+ * real, from a test run, with a licence key in the body.
+ *
+ * Same reasoning as the issuer directory above: fixing the one test would leave
+ * every future test one forgotten injection away from sending mail. Clearing the
+ * configuration here means `mailConfig()` returns null, delivery reports
+ * "skipped", and forgetting is harmless.
+ */
+for (const key of ["RESEND_API_KEY", "PROOFWORK_MAIL_FROM", "RESEND_FROM"]) {
+    delete process.env[key];
+}
 const keys = generateIssuerKeypair();
 fs.writeFileSync(path.join(sandbox, "issuer-private.pem"), keys.privateKeyPem, "utf8");
 fs.writeFileSync(path.join(sandbox, "issuer-public.pem"), keys.publicKeyPem, "utf8");

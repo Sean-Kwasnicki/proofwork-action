@@ -1,6 +1,34 @@
 import fs from "node:fs";
 import path from "node:path";
 import { tryExec } from "./util/exec.js";
+/**
+ * Where the repository actually is, relative to the directory being graded.
+ *
+ * A checkout does not stop being a checkout because you point at a subdirectory
+ * of it. Git resolves this by walking up until it finds `.git`, and grading
+ * `packages/api` of a monorepo has to behave the same way — otherwise
+ * `git.repository` fails on a directory that is plainly inside a clone, the
+ * proof is not `ok`, and a run that deserves a certificate never gets one.
+ *
+ * `.git` is tested with `existsSync` rather than `isDirectory` on purpose: in a
+ * worktree or a submodule it is a *file* containing a `gitdir:` pointer.
+ */
+function findRepoRoot(start) {
+    let dir = path.resolve(start);
+    for (;;) {
+        if (fs.existsSync(path.join(dir, ".git")))
+            return dir;
+        const parent = path.dirname(dir);
+        if (parent === dir)
+            return null;
+        dir = parent;
+    }
+}
+/** `packages/api/` when grading a subdirectory, `""` at the repository root. */
+function prefixFor(repoRoot, root) {
+    const rel = path.relative(repoRoot, path.resolve(root)).replace(/\\/g, "/");
+    return rel && rel !== "." ? `${rel}/` : "";
+}
 function addNames(set, block) {
     for (const line of block.split(/\r?\n/)) {
         const t = line.trim();
@@ -8,13 +36,41 @@ function addNames(set, block) {
             set.add(t.replace(/\\/g, "/"));
     }
 }
-function collectChangedFiles(root) {
-    const set = new Set();
+/**
+ * Re-base paths git reported from the repository root onto the graded root.
+ *
+ * Measured rather than assumed, because git is not consistent about it:
+ * `git status --porcelain` reports from the repository root even when run in a
+ * subdirectory and even when scoped to `.`, while `git ls-files --others`
+ * reports from the current directory. Mixing the two under a subdirectory root
+ * produces paths like `packages/api/packages/api/src/x.ts`, and every check that
+ * opens a changed file then silently finds nothing.
+ *
+ * Files outside the graded directory are dropped rather than re-based. They
+ * belong to a sibling package, and grading a directory must not draw conclusions
+ * from code that is not in it — that is what made the last attempt read a
+ * neighbouring app's empty test as if it were the subject's.
+ */
+function rebase(files, prefix) {
+    if (!prefix)
+        return [...files];
+    const out = [];
+    for (const f of files) {
+        if (f.startsWith(prefix))
+            out.push(f.slice(prefix.length));
+    }
+    return out;
+}
+function collectChangedFiles(root, prefix) {
+    /** Reported relative to the repository root; needs re-basing. */
+    const fromRepoRoot = new Set();
+    /** Already relative to the graded directory. */
+    const fromHere = new Set();
     const base = process.env.GITHUB_BASE_REF;
     if (base) {
         const pr = tryExec("git", ["diff", "--name-only", `origin/${base}...HEAD`], root, 8_000);
         if (pr.ok)
-            addNames(set, pr.out);
+            addNames(fromRepoRoot, pr.out);
     }
     const porcelain = tryExec("git", ["status", "--porcelain", "-uall"], root, 8_000);
     if (porcelain.ok && porcelain.out.length) {
@@ -25,17 +81,18 @@ function collectChangedFiles(root) {
             const arrow = rest.indexOf(" -> ");
             const file = (arrow === -1 ? rest : rest.slice(arrow + 4)).trim().replace(/\\/g, "/");
             if (file)
-                set.add(file);
+                fromRepoRoot.add(file);
         }
     }
     else {
         const unstaged = tryExec("git", ["diff", "--name-only", "HEAD"], root, 8_000);
         const staged = tryExec("git", ["diff", "--cached", "--name-only"], root, 8_000);
+        for (const block of [unstaged.out, staged.out])
+            addNames(fromRepoRoot, block);
         const untracked = tryExec("git", ["ls-files", "--others", "--exclude-standard"], root, 8_000);
-        for (const block of [unstaged.out, staged.out, untracked.out])
-            addNames(set, block);
+        addNames(fromHere, untracked.out);
     }
-    return [...set];
+    return [...new Set([...rebase(fromRepoRoot, prefix), ...fromHere])];
 }
 /** Untracked files are invisible to `git diff` — synthesize add hunks for reintro. */
 function synthesizeUntrackedDiff(root, changedFiles) {
@@ -76,12 +133,12 @@ function synthesizeUntrackedDiff(root, changedFiles) {
 function collectUnifiedDiff(root, changedFiles) {
     const base = process.env.GITHUB_BASE_REF;
     if (base) {
-        const merge = tryExec("git", ["diff", "--unified=0", `origin/${base}...HEAD`], root, 12_000);
+        const merge = tryExec("git", ["diff", "--relative", "--unified=0", `origin/${base}...HEAD`], root, 12_000);
         if (merge.ok && merge.out.trim()) {
             const syn = synthesizeUntrackedDiff(root, changedFiles);
             return syn ? `${merge.out}\n${syn}` : merge.out;
         }
-        const merge2 = tryExec("git", ["diff", "--unified=0", `${base}...HEAD`], root, 12_000);
+        const merge2 = tryExec("git", ["diff", "--relative", "--unified=0", `${base}...HEAD`], root, 12_000);
         if (merge2.ok && merge2.out.trim()) {
             const syn = synthesizeUntrackedDiff(root, changedFiles);
             return syn ? `${merge2.out}\n${syn}` : merge2.out;
@@ -103,8 +160,13 @@ function collectUnifiedDiff(root, changedFiles) {
 }
 export function buildGitContext(root) {
     const t0 = performance.now();
-    const gitDir = path.join(root, ".git");
-    const isGit = fs.existsSync(gitDir);
+    // Walk up, exactly as git does. A subdirectory of a clone is still in that
+    // clone, and treating it otherwise failed `git.repository` for every monorepo
+    // package — which made `proof.ok` false while the report card still read
+    // CERTIFIED, so CI exited 2 and no record was ever deposited for work that had
+    // earned one.
+    const repoRoot = findRepoRoot(root);
+    const isGit = repoRoot !== null;
     if (!isGit) {
         return {
             root,
@@ -116,9 +178,10 @@ export function buildGitContext(root) {
             git_ms: Math.round(performance.now() - t0),
         };
     }
+    const prefix = prefixFor(repoRoot, root);
     const branch = tryExec("git", ["rev-parse", "--abbrev-ref", "HEAD"], root, 5_000);
     const commit = tryExec("git", ["rev-parse", "HEAD"], root, 5_000);
-    const changedFiles = collectChangedFiles(root);
+    const changedFiles = collectChangedFiles(root, prefix);
     const unifiedDiff = collectUnifiedDiff(root, changedFiles);
     return {
         root,
