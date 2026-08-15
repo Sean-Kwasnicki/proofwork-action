@@ -1105,7 +1105,13 @@ async function main() {
      */
     if (args.command === "ci-deposit") {
         const issuerUrl = process.env.PROOFWORK_ISSUER_URL ?? DEPOSIT_AUDIENCE;
-        const licenceKey = process.env.PROOFWORK_LICENSE ?? "";
+        // Trimmed before it is used anywhere. A licence pasted into a CI secret
+        // arrives with whatever the editor or shell added — most often a leading
+        // byte-order mark, which is invisible, survives every eyeball check, and is
+        // not a legal HTTP header character. Untrimmed it produced "the character at
+        // index 0 has a value of 65279", which tells a customer nothing at all.
+        // `trim` covers U+FEFF as well as ordinary whitespace.
+        const licenceKey = (process.env.PROOFWORK_LICENSE ?? "").trim();
         const repository = process.env.GITHUB_REPOSITORY ?? "";
         const note = (s) => {
             process.stdout.write(s);

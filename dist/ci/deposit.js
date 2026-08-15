@@ -71,13 +71,17 @@ export async function requestOidcToken(input) {
 export async function sendDeposit(input) {
     const doFetch = input.fetchImpl ?? fetch;
     const base = input.issuerUrl.replace(/\/+$/, "");
+    // Defensive as well as at the call site. Anything that cannot go in a header
+    // makes `fetch` throw before the request is sent, and the resulting message
+    // names a character code rather than the licence.
+    const licence = input.licenceKey.trim();
     try {
         const res = await doFetch(`${base}/deposit`, {
             method: "POST",
             headers: {
                 "content-type": "application/json",
                 authorization: `Bearer ${input.oidcToken}`,
-                "x-proofwork-license": input.licenceKey,
+                "x-proofwork-license": licence,
             },
             body: JSON.stringify(input.payload),
             signal: AbortSignal.timeout(30_000),
