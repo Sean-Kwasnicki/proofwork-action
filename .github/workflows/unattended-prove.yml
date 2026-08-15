@@ -1,0 +1,16 @@
+name: unattended-prove
+
+# One-click proof that GitHub Actions can mint a public record.
+# Does not run on every push — only when you press Run workflow.
+on:
+  workflow_dispatch:
+
+jobs:
+  prove:
+    uses: Sean-Kwasnicki/proofwork-action/.github/workflows/gate.yml@v1
+    with:
+      root: pass-app
+      subject: "Cursor Test Buyer Ltd"
+      comment: "false"
+    secrets:
+      license-key: ${{ secrets.PROOFWORK_LICENSE }}

@@ -1,0 +1,23 @@
+{
+  "company": {
+    "legalName": "Cascade Harbor Co.",
+    "shortName": "Cascade Harbor",
+    "domain": "cascadeharbor.example"
+  },
+  "software": {
+    "name": "Harborline Commerce Platform",
+    "shortName": "Harborline",
+    "module": "Harborline Billing",
+    "moduleId": "harborline.billing"
+  },
+  "agent": {
+    "id": "billing-sync",
+    "displayName": "Harborline Billing Sync",
+    "role": "Autonomous invoice charging and receipt delivery for Harborline Billing."
+  },
+  "certificate": {
+    "subject": "Cascade Harbor Co.",
+    "repository": "github.com/cascade-harbor/billing-sync",
+    "title": "Harborline Billing Sync - Harborline Commerce Platform"
+  }
+}

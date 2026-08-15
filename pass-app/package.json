@@ -1,0 +1,24 @@
+{
+  "name": "@cascade-harbor/billing-sync",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/**/*.test.js",
+    "start": "node src/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "description": "Harborline Billing Sync - autonomous agent for Harborline Commerce Platform (Harborline Billing) at Cascade Harbor Co..",
+  "author": "Cascade Harbor Co.",
+  "homepage": "https://cascadeharbor.example/software/harborline/billing-sync",
+  "cascadeHarbor": {
+    "company": "Cascade Harbor Co.",
+    "software": "Harborline Commerce Platform",
+    "module": "Harborline Billing",
+    "agentDisplayName": "Harborline Billing Sync",
+    "certificateSubject": "Cascade Harbor Co.",
+    "certificateRepo": "github.com/cascade-harbor/billing-sync"
+  }
+}
