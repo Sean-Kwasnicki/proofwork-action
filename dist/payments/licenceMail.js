@@ -85,7 +85,7 @@ export function renderLicenceEmail(f) {
         `record of payment. It does not include this key, because the key is`,
         `created only after payment is confirmed.`,
         ``,
-        `Organisation     ${org}`,
+        `Organization     ${org}`,
         `Plan             Proofwork ${plan}  ·  $99 / month`,
         `Valid through    ${expires}`,
         ``,
@@ -98,7 +98,7 @@ export function renderLicenceEmail(f) {
         ``,
         `Getting started`,
         ``,
-        `1. Sign in with the organisation name you entered at checkout`,
+        `1. Sign in with the organization name you entered at checkout`,
         `   proofwork signup --email ${email} --org "${org}"`,
         ``,
         `2. Activate the licence on your machine`,
@@ -110,12 +110,12 @@ export function renderLicenceEmail(f) {
         `For CI, store the key as a repository secret:`,
         `   PROOFWORK_LICENSE=<paste the key above>`,
         ``,
-        `If whoami still says free, the organisation name does not match this`,
+        `If whoami still says free, the organization name does not match this`,
         `licence. Sign in as "${org}", or ask us to reissue it against the name`,
-        `you want. We will not apply one organisation's licence to another.`,
+        `you want. We will not apply one organization's licence to another.`,
         ``,
         `Questions — reply to this email, or to your Stripe receipt, and include`,
-        `the organisation name.`,
+        `the organization name.`,
         ``,
         `— The Proofwork team`,
         `https://agent-proofwork.onrender.com/`,
@@ -153,7 +153,7 @@ export function renderLicenceEmail(f) {
         <tr>
           <td style="padding:16px 36px 8px;">
             <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f7faf8;border:1px solid #e3e8e6;border-radius:8px;">
-              <tr><td style="padding:14px 18px;font-size:13px;color:#5d706e;">Organisation</td><td style="padding:14px 18px;font-size:13px;color:#14201c;text-align:right;font-weight:600;">${o}</td></tr>
+              <tr><td style="padding:14px 18px;font-size:13px;color:#5d706e;">Organization</td><td style="padding:14px 18px;font-size:13px;color:#14201c;text-align:right;font-weight:600;">${o}</td></tr>
               <tr><td style="padding:0 18px 14px;font-size:13px;color:#5d706e;">Plan</td><td style="padding:0 18px 14px;font-size:13px;color:#14201c;text-align:right;font-weight:600;">Proofwork ${p} · $99 / month</td></tr>
               <tr><td style="padding:0 18px 14px;font-size:13px;color:#5d706e;">Valid through</td><td style="padding:0 18px 14px;font-size:13px;color:#14201c;text-align:right;font-weight:600;">${x}</td></tr>
             </table>
@@ -176,7 +176,7 @@ export function renderLicenceEmail(f) {
           <td style="padding:0 36px 24px;">
             <div style="font-size:13px;font-weight:600;color:#14201c;margin-bottom:10px;">Getting started</div>
             <ol style="margin:0;padding-left:18px;color:#3a4a46;font-size:14px;line-height:1.55;">
-              <li style="margin-bottom:10px;">Sign in with the organisation name you entered at checkout.<br>
+              <li style="margin-bottom:10px;">Sign in with the organization name you entered at checkout.<br>
                 <code style="display:block;margin-top:6px;background:#f7faf8;border:1px solid #e3e8e6;border-radius:6px;padding:8px 10px;font-size:12px;color:#14201c;">proofwork signup --email ${e} --org "${o}"</code>
               </li>
               <li style="margin-bottom:10px;">Activate the licence on your machine.<br>
@@ -187,12 +187,12 @@ export function renderLicenceEmail(f) {
               </li>
             </ol>
             <p style="margin:14px 0 0;font-size:13px;color:#3a4a46;">For CI, add a repository secret named <code>PROOFWORK_LICENSE</code> with the key above.</p>
-            <p style="margin:12px 0 0;font-size:13px;color:#3a4a46;">If <code>whoami</code> still says free, the organisation name does not match this licence. Sign in as “${o}”, or ask us to reissue it against the name you want.</p>
+            <p style="margin:12px 0 0;font-size:13px;color:#3a4a46;">If <code>whoami</code> still says free, the organization name does not match this licence. Sign in as “${o}”, or ask us to reissue it against the name you want.</p>
           </td>
         </tr>
         <tr>
           <td style="padding:18px 36px 28px;border-top:1px solid #eef2f0;font-size:12px;line-height:1.5;color:#5d706e;">
-            Questions — reply to this email, or to your Stripe receipt, and include the organisation name.<br><br>
+            Questions — reply to this email, or to your Stripe receipt, and include the organization name.<br><br>
             — The Proofwork team<br>
             <a href="https://agent-proofwork.onrender.com/" style="color:#1a9a5c;">agent-proofwork.onrender.com</a>
           </td>

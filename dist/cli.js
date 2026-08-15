@@ -17,6 +17,10 @@ import { readEnforcementLog, renderEnforcement, summariseEnforcement } from "./g
 import { embedPublicKey, issuerPaths, issueLicenseFor, loadOrCreateIssuerKeys } from "./issuer.js";
 import { closeBundle, describeBinding, openBundle } from "./bundle.js";
 import { assessFreshness, freshnessLabel, scopeSentence } from "./staleness.js";
+import { VERIFY_HOST_ENV, verifyHost } from "./verifyHost.js";
+import { deliverCertificate } from "./payments/certificateMail.js";
+import { buildDepositPayload, requestOidcToken, sendDeposit } from "./ci/deposit.js";
+import { DEPOSIT_AUDIENCE } from "./server/deposit.js";
 import { readRevocationList, renderRevocationList, republishRevocationList, revokeRecord, } from "./revocation.js";
 import { applyTier, renderFreeResult } from "./tier.js";
 import { renderStripeStatus, resolveStripe, stripeStatus } from "./payments/stripe.js";
@@ -55,6 +59,7 @@ Usage:
   proofwork report [--root <dir>] [--json] [--subject <name>]
   proofwork certificate [--root <dir>] [--subject <name>] [--repo <id>] [--out <dir>]
   proofwork verify <record.json> [--json]
+  proofwork publish <record.json>     needs PROOFWORK_VERIFY_URL
   proofwork vault [--html] [--json]
   proofwork fleet [--root <dir-of-repos>] [--json]
   proofwork enforcement [--json]
@@ -87,6 +92,7 @@ Commands:
   report              Graded report card — what each section scored and the route to 100
   certificate         Render the certificate document for a passing run
   verify              Verify a signed record handed to you — needs no call to Proofwork
+  publish             Send a record to the verify host so its link resolves for others
   vault               Every credential you hold, re-verified on read
   fleet               Grade every agent under a directory — worst first
   enforcement         What the runtime spend guard actually allowed and refused
@@ -243,6 +249,21 @@ function parseArgs(argv) {
     if (argv[0] === "activate") {
         args.command = "activate";
         args.licenseKey = argv[1] ?? "";
+        return args;
+    }
+    if (argv[0] === "ci-deposit") {
+        args.command = "ci-deposit";
+        for (let i = 1; i < argv.length; i += 1) {
+            if (argv[i] === "--root")
+                args.root = path.resolve(argv[++i] ?? process.cwd());
+            else if (argv[i] === "--subject")
+                args.subject = argv[++i] ?? "";
+        }
+        return args;
+    }
+    if (argv[0] === "publish") {
+        args.command = "publish";
+        args.recordFile = argv[1] ?? "";
         return args;
     }
     if (argv[0] === "revoke") {
@@ -988,6 +1009,33 @@ async function main() {
             console.log(`  record  ${issued.entry.record_id}   ${issued.recordPath}`);
             console.log(`  Hand that file to anyone. They verify it with:`);
             console.log(`    proofwork verify ${path.basename(issued.recordPath)}`);
+            /**
+             * Email the certificate.
+             *
+             * Awaited rather than fired off, because this branch ends in
+             * `process.exit(0)` and a pending send would simply be killed — the
+             * customer would see "certificate issued" and never receive anything,
+             * which is the failure this step exists to remove.
+             *
+             * The licence key is deliberately absent from that message. This is the
+             * one email a customer is expected to forward to a buyer, and putting a
+             * bearer credential in it would hand the paid tier to their reviewers.
+             */
+            const account = loadAccount();
+            const certMail = await deliverCertificate({
+                entry: issued.entry,
+                to: account?.email ?? "",
+                certificateHtml: file,
+            });
+            if (certMail.status === "sent") {
+                console.log("");
+                console.log(`  Certificate emailed to ${account?.email ?? ""}`);
+            }
+            else if (certMail.status === "failed") {
+                console.log("");
+                console.log(`  Certificate NOT emailed: ${certMail.error}`);
+                console.log(`  The record is issued and on disk either way.`);
+            }
             // Badges are written alongside, unprompted. A customer who has to run a
             // second command for the social card will not run it, and the social card
             // is the only artefact here that travels to people who were not looking.
@@ -1043,6 +1091,140 @@ async function main() {
             }
         }
         process.exit(result.ok ? 0 : 1);
+    }
+    /**
+     * Deposit a passing CI run, so a record is issued with nobody here involved.
+     *
+     * Only ever run by our reusable workflow. It grades, and on a pass it asks
+     * GitHub to attest which workflow produced the result, then sends counts and
+     * digests — never source, never findings — to the issuer.
+     *
+     * Every failure exits 0. This runs after the gate has already decided whether
+     * to block the merge, and a certificate that could not be issued is not a
+     * reason to fail a build that passed. The reason is printed either way.
+     */
+    if (args.command === "ci-deposit") {
+        const issuerUrl = process.env.PROOFWORK_ISSUER_URL ?? DEPOSIT_AUDIENCE;
+        const licenceKey = process.env.PROOFWORK_LICENSE ?? "";
+        const repository = process.env.GITHUB_REPOSITORY ?? "";
+        const note = (s) => {
+            process.stdout.write(s);
+        };
+        if (!licenceKey) {
+            note("\n  No PROOFWORK_LICENSE, so no record was requested.\n" +
+                "  The gate still ran and its verdict stands.\n\n");
+            process.exit(0);
+        }
+        const proof = runProof({ root: args.root, fast: args.fast, strict: args.strict });
+        const score = scoreProof(proof);
+        if (!proof.ok) {
+            note("\n  Not a passing run — no record requested.\n\n");
+            process.exit(0);
+        }
+        const oidc = await requestOidcToken({ audience: issuerUrl });
+        if (!oidc.ok) {
+            note(`\n  ${oidc.reason}\n\n`);
+            process.exit(0);
+        }
+        const payload = buildDepositPayload({
+            proof,
+            subject: args.subject || repository.split("/")[1] || repository,
+            score: score.final,
+            assertions: score.assertions,
+            repository,
+            ...(process.env.GITHUB_SHA ? { commit: process.env.GITHUB_SHA } : {}),
+            ...(process.env.GITHUB_REF_NAME ? { branch: process.env.GITHUB_REF_NAME } : {}),
+        });
+        const sent = await sendDeposit({ issuerUrl, payload, oidcToken: oidc.token, licenceKey });
+        if (!sent.ok) {
+            note(`\n  No record was issued: ${sent.reason}\n  The gate passed regardless.\n\n`);
+            process.exit(0);
+        }
+        note(`\n  ${sent.status === "already_issued" ? "Record already issued" : "Record issued"} ` +
+            `${sent.recordId}\n    ${sent.verifyUrl}\n\n`);
+        // Surfaced in the run's summary so the link is where a reviewer looks.
+        const summaryFile = process.env.GITHUB_STEP_SUMMARY;
+        if (summaryFile) {
+            try {
+                fs.appendFileSync(summaryFile, `\n### Proofwork certificate\n\n` +
+                    `**${sent.recordId}** · ${payload.integrity_score}/100\n\n` +
+                    `[Verify this record](${sent.verifyUrl})\n`, "utf8");
+            }
+            catch {
+                // A summary is a convenience. The record exists either way.
+            }
+        }
+        process.exit(0);
+    }
+    /**
+     * Send a record to the verify host so its link resolves for other people.
+     *
+     * Publication is opt-in and separate from issuance, because they answer to
+     * different people. Issuing is ours; deciding that a third party may look this
+     * up is the holder's. A gate that published every record automatically would
+     * put a customer's denials on our infrastructure without asking.
+     *
+     * Nothing about the record changes. The signature already made it verifiable
+     * offline by anyone holding the file; this only means a stranger with the link
+     * does not need the file first.
+     */
+    if (args.command === "publish") {
+        if (!args.recordFile) {
+            process.stderr.write("\n  Usage: proofwork publish <record.json>\n\n" +
+                "  Sends a signed record to the verify host so /verify/<id> resolves.\n" +
+                `  Set ${VERIFY_HOST_ENV} to the host first.\n\n`);
+            process.exit(1);
+        }
+        const host = verifyHost();
+        if (!host) {
+            process.stderr.write(`\n  ${VERIFY_HOST_ENV} is not set, so there is nowhere to publish to.\n\n` +
+                `    ${VERIFY_HOST_ENV}=https://your-verify-host proofwork publish ${args.recordFile}\n\n` +
+                "  The record is already verifiable offline by anyone you hand it to:\n" +
+                `    proofwork verify ${args.recordFile}\n\n`);
+            process.exit(1);
+        }
+        let body;
+        try {
+            body = fs.readFileSync(args.recordFile, "utf8");
+        }
+        catch (e) {
+            process.stderr.write(`\n  Cannot read ${args.recordFile}: ${e instanceof Error ? e.message : String(e)}\n\n`);
+            process.exit(1);
+        }
+        // Checked here as well as at the host. Publishing a record that does not
+        // verify would fail anyway, and finding that out locally names the problem
+        // as the file rather than as the network.
+        const local = verifyCredentialFile(args.recordFile);
+        if (!local.ok) {
+            process.stderr.write(`\n  ${args.recordFile} does not verify, so there is no point publishing it.\n` +
+                local.errors.map((e) => `    · ${e}\n`).join("") +
+                "\n");
+            process.exit(1);
+        }
+        void fetch(`${host}/records`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body,
+            signal: AbortSignal.timeout(30_000),
+        })
+            .then(async (res) => {
+            const j = (await res.json().catch(() => ({})));
+            if (res.ok) {
+                const id = j.record_id ?? local.entry?.record_id ?? "";
+                process.stdout.write((j.status === "already_published"
+                    ? `\n  Already published — ${id}\n`
+                    : `\n  Published ${id}\n`) + `\n    ${host}/verify/${id}\n\n`);
+                process.exit(0);
+            }
+            process.stderr.write(`\n  The host refused it: ${j.reason ?? `HTTP ${res.status}`}\n\n`);
+            process.exit(1);
+        })
+            .catch((e) => {
+            process.stderr.write(`\n  Could not reach ${host}: ${e instanceof Error ? e.message : String(e)}\n\n` +
+                "  The record is unaffected and still verifies offline.\n\n");
+            process.exit(1);
+        });
+        return;
     }
     if (args.command === "revoke") {
         /**

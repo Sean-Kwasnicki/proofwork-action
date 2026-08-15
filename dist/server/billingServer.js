@@ -1,4 +1,11 @@
 import http from "node:http";
+import os from "node:os";
+import path from "node:path";
+import { lookupRecord, verifyPage } from "./verifyServer.js";
+import { parseRecord, publishRecord } from "./recordPublication.js";
+import { ledgerPayload } from "./ledger.js";
+import { handleDeposit } from "./deposit.js";
+import { deliverCertificate } from "../payments/certificateMail.js";
 import { fulfilWebhook, readFulfilments, webhookSecretFingerprint } from "../payments/fulfil.js";
 import { readRevocationList, republishRevocationList } from "../revocation.js";
 import { createCheckoutSession, verifyWebhookSignature } from "../payments/checkout.js";
@@ -50,6 +57,26 @@ function readBody(req, limitBytes = 1_000_000) {
         req.on("error", reject);
     });
 }
+/**
+ * Who to send a deposited certificate to.
+ *
+ * Taken from the fulfilment log — the address the organisation paid with —
+ * rather than from the deposit body. A deposit is authenticated as a CI run, not
+ * as a person, so an address inside it would be an address whoever controls that
+ * repository chose. Mailing a customer's certificate to an attacker-supplied
+ * address on the strength of a workflow token is not a trade worth making, and
+ * the address we already hold is the correct one anyway.
+ */
+function depositEmailFor(subject, logPath) {
+    const wanted = subject.trim().toLowerCase();
+    const match = [...readFulfilments(logPath)]
+        .reverse()
+        .find((f) => f.reference.trim().toLowerCase() === wanted);
+    return match?.email ?? "";
+}
+/** Same resolution the CLI and the verify service use, so all three agree. */
+const registryLogPath = () => process.env.PROOFWORK_REGISTRY_LOG ??
+    path.join(process.env.PROOFWORK_ISSUER_DIR ?? path.join(os.homedir(), ".proofwork-issuer"), "registry.jsonl");
 /**
  * Parse the two fields, from either shape.
  *
@@ -275,6 +302,200 @@ export function createBillingServer(opts = {}) {
                     "content-type": "application/json",
                     "access-control-allow-origin": "*",
                 });
+                res.end(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }));
+            });
+            return;
+        }
+        /**
+         * A CI run depositing a passing result.
+         *
+         * This is the route that makes the product unattended: a customer merges,
+         * our reusable workflow grades on their runner, and a signed record appears
+         * with nobody here involved.
+         *
+         * Two credentials, neither sufficient alone. The GitHub OIDC token proves
+         * *our* workflow computed the score; the licence proves the organisation
+         * paid. A licence on its own would let a paying customer POST any number
+         * they liked for a repository that never ran a check — and we would sign it.
+         *
+         * Hash-only. The payload carries counts and digests; a body containing
+         * source-shaped fields is refused rather than stripped, so the promise that
+         * customer code never reaches us cannot quietly stop being true.
+         */
+        if (url.pathname === "/deposit" && req.method === "POST") {
+            void readBody(req)
+                .then(async (body) => {
+                const auth = String(req.headers.authorization ?? "");
+                const oidcToken = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
+                const licenceKey = String(req.headers["x-proofwork-license"] ?? "").trim();
+                const result = await handleDeposit({
+                    body,
+                    oidcToken,
+                    licenceKey,
+                    ...(opts.registryLogPath !== undefined ? { registryLogPath: opts.registryLogPath } : {}),
+                    ...(opts.depositLogPath !== undefined ? { depositLogPath: opts.depositLogPath } : {}),
+                    ...(opts.depositAudience !== undefined ? { audience: opts.depositAudience } : {}),
+                    ...(opts.fetchJwks !== undefined ? { fetchJwks: opts.fetchJwks } : {}),
+                    ...(opts.issueCredential !== undefined ? { issue: opts.issueCredential } : {}),
+                    onIssued: async (entry) => {
+                        // The certificate email, same module the CLI uses. Its own failure
+                        // handling records rather than throws; the try here is belt and
+                        // braces because a deposit must never fail for a mail reason.
+                        await deliverCertificate({
+                            entry,
+                            to: depositEmailFor(entry.subject, opts.logPath),
+                            ...(opts.mailSender !== undefined ? { send: opts.mailSender } : {}),
+                            ...(opts.certDeliveryLogPath !== undefined
+                                ? { logPath: opts.certDeliveryLogPath }
+                                : {}),
+                        });
+                    },
+                });
+                if (result.status === "rejected") {
+                    process.stderr.write(`[proofwork] deposit refused (${result.code}): ${result.reason}\n`);
+                    res.writeHead(result.code, { "content-type": "application/json" });
+                    res.end(JSON.stringify({ status: "rejected", reason: result.reason }));
+                    return;
+                }
+                process.stdout.write(`[proofwork] deposit ${result.status} ${result.entry.record_id} ` +
+                    `for ${result.entry.subject}\n`);
+                res.writeHead(result.code, { "content-type": "application/json" });
+                // The record id and its verify link, so the workflow can print them in
+                // the job summary. No licence key, and nothing the customer did not
+                // already send us.
+                res.end(JSON.stringify({
+                    status: result.status,
+                    record_id: result.entry.record_id,
+                    verify_path: `/verify/${result.entry.record_id}`,
+                    integrity_score: result.entry.integrity_score,
+                }));
+            })
+                .catch((e) => {
+                res.writeHead(500, { "content-type": "application/json" });
+                res.end(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }));
+            });
+            return;
+        }
+        /**
+         * The public list of certified records.
+         *
+         * Reads the same log `/verify/:id` reads — there is no second database, so
+         * a row on the ledger and the record behind its link cannot disagree.
+         *
+         * Certified only. A denial is signed and belongs to its holder; publishing
+         * a list of who failed would turn the gate into a reputational weapon, and
+         * the rational response to that is to stop running it — which ends the only
+         * process that produces evidence at all.
+         */
+        if (url.pathname === "/ledger.json" && (req.method === "GET" || req.method === "HEAD")) {
+            const org = url.searchParams.get("org") ?? undefined;
+            const payload = ledgerPayload({
+                logPath: opts.registryLogPath ?? registryLogPath(),
+                ...(opts.revocationPath !== undefined ? { revocationPath: opts.revocationPath } : {}),
+                ...(org ? { organization: org } : {}),
+            });
+            res.writeHead(200, {
+                "content-type": "application/json; charset=utf-8",
+                // Read cross-origin by the static site, which is a different host.
+                "access-control-allow-origin": "*",
+                // Short: a newly published record should appear without anyone waiting
+                // out a cache, and a withdrawn one should stop appearing just as fast.
+                "cache-control": "public, max-age=60",
+            });
+            res.end(req.method === "HEAD" ? "" : JSON.stringify(payload));
+            return;
+        }
+        /**
+         * Public verification of one record.
+         *
+         * ## Why it lives on this process
+         *
+         * Not because it belongs here. It is read-only and holds nothing secret, so
+         * the verify service would be a better home — but the records live on the
+         * issuer's disk, and this is the process that has it mounted. A separate
+         * service would need either a copy of the log or a call back to this one,
+         * and both are more moving parts than a route that opens a file.
+         *
+         * Nothing about verification is privileged: the signature is the authority
+         * and travels with the record, so this endpoint recomputes exactly what
+         * `proofwork verify record.json` recomputes offline. If this host is down,
+         * every record ever issued still verifies.
+         *
+         * ## It does not enumerate
+         *
+         * Lookup is by an id the holder chose to share. There is no list here, and
+         * an unknown id returns the same shape as a known one, so the route cannot
+         * be walked to discover who our customers are.
+         */
+        if (url.pathname.startsWith("/verify/") && (req.method === "GET" || req.method === "HEAD")) {
+            const recordId = decodeURIComponent(url.pathname.slice("/verify/".length)).trim();
+            const result = lookupRecord(recordId, opts.registryLogPath);
+            const wantsJson = url.searchParams.get("format") === "json" ||
+                String(req.headers.accept ?? "").includes("application/json");
+            // 404 for a record we do not have, so a link checker and a script both see
+            // the truth — but with a body that explains it. A blank 404 on a
+            // verification link reads as "this certificate is fake", when the honest
+            // answer is usually "this record was never published here".
+            const status = result.found ? 200 : 404;
+            if (wantsJson) {
+                res.writeHead(status, {
+                    "content-type": "application/json; charset=utf-8",
+                    "access-control-allow-origin": "*",
+                    "cache-control": "public, max-age=60",
+                });
+                res.end(JSON.stringify({
+                    record_id: recordId,
+                    found: result.found,
+                    valid: result.valid,
+                    expired: result.expired,
+                    revoked: result.revoked,
+                    revocation_checked: result.revocation_checked,
+                    errors: result.errors,
+                    ...(result.entry ? { record: result.entry } : {}),
+                }));
+                return;
+            }
+            res.writeHead(status, {
+                "content-type": "text/html; charset=utf-8",
+                "cache-control": "public, max-age=60",
+            });
+            // The same renderer the standalone verify service uses. Two pages that
+            // answered this question differently would be two answers.
+            res.end(req.method === "HEAD" ? "" : verifyPage(recordId, result));
+            return;
+        }
+        /**
+         * Accept a signed record for publication.
+         *
+         * Unauthenticated on purpose: the record authenticates itself. Only entries
+         * that verify against the issuer public key are stored, so this cannot be
+         * used to inject anything we did not already sign — and what it can be used
+         * to submit is a document whose entire design is to be handed to strangers.
+         */
+        if (url.pathname === "/records" && req.method === "POST") {
+            void readBody(req)
+                .then((body) => {
+                const parsed = parseRecord(body);
+                if (!parsed.ok) {
+                    res.writeHead(400, { "content-type": "application/json" });
+                    res.end(JSON.stringify({ status: "rejected", reason: parsed.reason }));
+                    return;
+                }
+                const result = publishRecord({
+                    entry: parsed.entry,
+                    logPath: opts.registryLogPath ?? registryLogPath(),
+                });
+                const code = result.status === "rejected" ? 400 : result.status === "published" ? 201 : 200;
+                res.writeHead(code, {
+                    "content-type": "application/json",
+                    "access-control-allow-origin": "*",
+                });
+                res.end(JSON.stringify(result.status === "rejected"
+                    ? { status: result.status, reason: result.reason }
+                    : { status: result.status, record_id: result.entry.record_id }));
+            })
+                .catch((e) => {
+                res.writeHead(500, { "content-type": "application/json" });
                 res.end(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }));
             });
             return;

@@ -1,0 +1,106 @@
+name: Proofwork gate
+
+# The workflow that can mint a public record.
+#
+# ## Why a reusable workflow rather than just the Action
+#
+# The issuer signs a score it did not compute, so something has to make that
+# defensible. GitHub's OIDC token carries `job_workflow_ref`, naming the workflow
+# file that is executing — and when a caller uses this workflow, that field names
+# *this file*, in *our* repository, even though the run belongs to them.
+#
+# That is the whole mechanism. The customer controls the repository and the code
+# being graded. They do not control the grading, and they cannot make a token say
+# they did. A workflow they wrote themselves produces a token naming their own
+# file, which the issuer refuses.
+#
+# The Action on its own remains a gate and publishes nothing. That split is
+# deliberate: running a check on your own code should never put a row on someone
+# else's public page without you asking for it.
+
+on:
+  workflow_call:
+    inputs:
+      root:
+        description: "Directory to grade. Defaults to the checked-out repository."
+        required: false
+        type: string
+        default: "."
+      subject:
+        description: >-
+          Your organization name, exactly as it appears on the licence. The
+          certificate is issued to this name and the issuer checks it against the
+          licence — a mismatch is refused rather than quietly issued to the wrong
+          company.
+        required: false
+        type: string
+        default: ""
+      fail-on:
+        description: '"denied" (default), "any", or "never".'
+        required: false
+        type: string
+        default: "denied"
+      comment:
+        description: "Post the report card as a pull-request comment."
+        required: false
+        type: string
+        default: "true"
+      runs-on:
+        description: "Runner label, for teams on self-hosted runners."
+        required: false
+        type: string
+        default: "ubuntu-latest"
+    secrets:
+      license-key:
+        description: >-
+          Your Proofwork licence. Required for a signed record; without it the
+          gate still runs and returns a verdict.
+        required: false
+    outputs:
+      verdict:
+        description: "PASS or FAIL."
+        value: ${{ jobs.gate.outputs.verdict }}
+      score:
+        description: "Integrity score out of 100."
+        value: ${{ jobs.gate.outputs.score }}
+
+jobs:
+  gate:
+    runs-on: ${{ inputs.runs-on }}
+
+    permissions:
+      # Read the code being graded. Nothing is written back to it.
+      contents: read
+      # The one that matters. Without it GitHub mints no OIDC token, the issuer
+      # cannot tell which workflow produced the score, and no record is issued —
+      # the gate still runs and still blocks a bad merge.
+      id-token: write
+      # Only used to post the report card as a comment.
+      pull-requests: write
+
+    outputs:
+      verdict: ${{ steps.proofwork.outputs.verdict }}
+      score: ${{ steps.proofwork.outputs.score }}
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          # Full history. Several checks compare the change against its base —
+          # reintroduced deletions, convergence, change-scoped test integrity —
+          # and a shallow clone silently turns those into "not assessed", which
+          # lowers the score for a reason nobody can see.
+          fetch-depth: 0
+
+      - name: Proofwork
+        id: proofwork
+        uses: Sean-Kwasnicki/proofwork-action@v1
+        with:
+          root: ${{ inputs.root }}
+          subject: ${{ inputs.subject }}
+          fail-on: ${{ inputs.fail-on }}
+          comment: ${{ inputs.comment }}
+          license-key: ${{ secrets.license-key }}
+          # Set only here. This is what separates a gate run from one that may
+          # publish, and it is not something a caller can turn on for themselves.
+          deposit: "true"

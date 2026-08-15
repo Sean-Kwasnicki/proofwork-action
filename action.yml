@@ -37,6 +37,15 @@ inputs:
     description: "Directory for artifacts. Written outside the graded tree."
     required: false
     default: "proofwork-out"
+  deposit:
+    description: >-
+      Request a signed public record for a passing run. Off by default, and
+      deliberately: this Action used directly is a gate, and a gate should not
+      publish anything about the repository it is gating without being asked.
+      The reusable workflow sets it, which is what ties a public record to a run
+      of code we published rather than to a workflow a customer could edit.
+    required: false
+    default: "false"
 
 outputs:
   verdict:
@@ -151,6 +160,30 @@ runs:
         name: proofwork-report
         path: ${{ inputs.out }}
         if-no-files-found: warn
+
+    # Only ever reached through the reusable workflow, which is what makes the
+    # resulting record attributable: GitHub's OIDC token names the workflow file
+    # that is running, and a public record is issued only when that file is ours.
+    #
+    # This grades again rather than reusing the run above. The report step emits
+    # a report card, which carries findings and no binding — so a deposit built
+    # from it would ship the customer's findings and still lack the digest the
+    # record binds to. A second pass over an already-warm checkout is the cost of
+    # sending hashes instead.
+    - name: Request a signed record
+      if: ${{ inputs.deposit == 'true' && steps.gate.outputs.verdict == 'PASS' }}
+      shell: bash
+      env:
+        PROOFWORK_LICENSE: ${{ inputs.license-key }}
+        PROOFWORK_READONLY: "1"
+      run: |
+        set -uo pipefail
+        # Never fails the job. The gate has already decided whether to block the
+        # merge; a certificate that could not be issued is not a reason to fail a
+        # build that passed, and the reason is printed either way.
+        node "${{ github.action_path }}/dist/cli.js" ci-deposit \
+          --root "${{ inputs.root }}" \
+          ${{ inputs.subject && format('--subject "{0}"', inputs.subject) || '' }} || true
 
     - name: Enforce
       shell: bash
