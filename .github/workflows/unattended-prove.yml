@@ -7,7 +7,7 @@ on:
 
 jobs:
   prove:
-    uses: Sean-Kwasnicki/proofwork-action/.github/workflows/gate.yml@v1
+    uses: Sean-Kwasnicki/proofwork-action/.github/workflows/gate.yml@main
     permissions:
       contents: read
       id-token: write
