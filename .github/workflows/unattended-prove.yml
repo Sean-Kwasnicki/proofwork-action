@@ -8,6 +8,10 @@ on:
 jobs:
   prove:
     uses: Sean-Kwasnicki/proofwork-action/.github/workflows/gate.yml@v1
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
     with:
       root: pass-app
       subject: "Cursor Test Buyer Ltd"

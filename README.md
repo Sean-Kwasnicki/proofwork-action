@@ -15,6 +15,10 @@ on: [pull_request, push]
 jobs:
   proofwork:
     uses: Sean-Kwasnicki/proofwork-action/.github/workflows/gate.yml@v1
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
     with:
       subject: "Your Company Ltd"   # exactly as on your licence
     secrets:
@@ -33,9 +37,10 @@ reusable workflow that is *ours* even though the run is yours. You control the
 code being graded; you do not control the grading, and a workflow you wrote
 yourself produces a token naming your own file, which the issuer refuses.
 
-That is also why the job needs `id-token: write` — the workflow above sets it
-for you. Without it the gate still runs and still blocks a bad merge; there is
-simply no record.
+That is also why the job needs `id-token: write` on the caller — GitHub will
+not let the reusable workflow request it unless the workflow that called it
+grants it. The snippet above does. Without it the gate still runs and still
+blocks a bad merge; there is simply no record.
 
 ## Gate only
 
