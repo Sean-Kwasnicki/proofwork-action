@@ -1,4 +1,5 @@
 import { describeBinding } from "../bundle.js";
+import { describeBand } from "../band.js";
 import { issuerPublicKey } from "../license.js";
 import { readLog, verifyRegistryEntry } from "../registry.js";
 import { readRevocationList, revocationStatusFor } from "../revocation.js";
@@ -40,11 +41,14 @@ export function ledgerRows(opts) {
         .filter((e) => !revocationStatusFor(e.record_id, revocations, pub, now).revoked)
         .map((e) => {
         const bound = describeBinding(e);
+        const band = describeBand({ verdict: e.verdict, score: e.integrity_score });
         return {
             record_id: e.record_id,
             date: e.issued_at.slice(0, 10),
             organization: e.subject,
             score: e.integrity_score,
+            band: band.band,
+            band_label: band.title,
             bound_label: bound.label,
             bound_short: bound.short,
             expired: Date.parse(e.expires_at) < now,
@@ -60,8 +64,10 @@ export function ledgerPayload(opts) {
         generated_at: new Date(opts.now ?? Date.now()).toISOString(),
         count: records.length,
         records,
-        note: "Certified records only. Denied records are signed and given to their holder, " +
-            "and are not published here. Each row can be checked independently at its verify " +
-            "link, or offline with the record file and no network.",
+        note: "Signed records of passing runs. Each row shows its band: certified at 85 and " +
+            "above, provisional from 60 — both passed the gate, and the distinction is the " +
+            "score, not the verdict. Denied records are signed and given to their holder, and " +
+            "are not published here. Each row can be checked independently at its verify link, " +
+            "or offline with the record file and no network.",
     };
 }

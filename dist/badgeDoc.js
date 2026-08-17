@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describeBinding } from "./bundle.js";
 import { verifyHost, verifyLinkFor } from "./verifyHost.js";
+import { describeBand } from "./band.js";
 /**
  * The badge — the part that travels.
  *
@@ -39,8 +40,11 @@ const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, 
  * customer's repository, and no amount of convenience justifies that.
  */
 export function badgeSvg(entry) {
-    const label = entry.verdict === "pass" ? "VERIFIED" : "NOT VERIFIED";
-    const accent = entry.verdict === "pass" ? GREEN : "#e0554f";
+    // Banded, not just passed. A badge is the most-copied surface we have, so it
+    // is the last place the word "certified" should appear on an 84/100 record.
+    const band = describeBand({ verdict: entry.verdict, score: entry.integrity_score });
+    const label = band.certified ? "CERTIFIED" : band.band === "provisional" ? "PROVISIONAL" : "NOT VERIFIED";
+    const accent = band.certified ? GREEN : band.band === "provisional" ? "#c9a961" : "#e0554f";
     const score = `${entry.integrity_score}/100`;
     // Monospace advances are predictable enough to size the plate without measuring.
     const idWidth = entry.record_id.length * 6.2;
@@ -57,7 +61,7 @@ export function badgeSvg(entry) {
 }
 /** README snippet. The form most customers will actually use. */
 export function badgeMarkdown(entry, verifyUrl) {
-    const alt = `Proofwork ${entry.verdict === "pass" ? "Verified" : "Not Verified"} — ${entry.integrity_score}/100`;
+    const alt = `Proofwork ${describeBand({ verdict: entry.verdict, score: entry.integrity_score }).title} — ${entry.integrity_score}/100`;
     // A hardcoded host produces a dead link the day before the service exists and
     // the day after it moves. A 404 on a verification link is worse than no link:
     // it invites the reader to conclude the certificate is fake.
@@ -78,9 +82,10 @@ export function badgeMarkdown(entry, verifyUrl) {
  * PDF or screenshots at that ratio; both give LinkedIn what it wants.
  */
 export function socialCardHtml(entry, opts = {}) {
+    const band = describeBand({ verdict: entry.verdict, score: entry.integrity_score });
     const pass = entry.verdict === "pass";
-    const accent = pass ? GREEN : "#e0554f";
-    const verdict = pass ? "CERTIFIED" : "NOT CERTIFIED";
+    const accent = band.certified ? GREEN : band.band === "provisional" ? "#c9a961" : "#e0554f";
+    const verdict = band.certified ? "CERTIFIED" : band.band === "provisional" ? "PROVISIONAL" : "NOT CERTIFIED";
     return `<!doctype html>
 <meta charset="utf-8">
 <title>Proofwork credential — ${esc(entry.subject)}</title>

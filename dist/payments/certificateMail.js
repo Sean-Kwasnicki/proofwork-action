@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { verifyLinkFor } from "../verifyHost.js";
+import { describeBand } from "../band.js";
 import { mailConfig, resendSender } from "./licenceMail.js";
 const CERT_DELIVERY_LOG = () => process.env.PROOFWORK_CERT_DELIVERY_LOG ??
     path.join(process.env.PROOFWORK_ISSUER_DIR ?? path.join(os.homedir(), ".proofwork-issuer"), "certificate-deliveries.jsonl");
@@ -43,8 +44,9 @@ export function renderCertificateEmail(entry, opts = {}) {
     const checkLine = link
         ? `Anyone can check it here:\n\n  ${link}\n\nor offline, with the record file and no network:\n\n  proofwork verify ${entry.record_id}.json`
         : `Anyone can check it offline, with the record file and no network:\n\n  proofwork verify ${entry.record_id}.json`;
+    const band = describeBand({ verdict: entry.verdict, score: entry.integrity_score });
     const text = [
-        `Proofwork CERTIFIED — ${entry.subject}`,
+        `Proofwork ${band.label} — ${entry.subject}`,
         ``,
         `Record      ${entry.record_id}`,
         `Score       ${entry.integrity_score}/100`,
@@ -71,12 +73,13 @@ export function renderCertificateEmail(entry, opts = {}) {
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border:1px solid #dde5e1;border-radius:12px;overflow:hidden">
         <tr><td style="background:#07100c;padding:22px 26px">
           <div style="font-family:ui-monospace,Menlo,monospace;font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:#c9a961">Proofwork</div>
-          <div style="font-size:20px;font-weight:600;color:#ffffff;margin-top:6px">Certified</div>
+          <div style="font-size:20px;font-weight:600;color:#ffffff;margin-top:6px">${esc(band.title)}</div>
         </td></tr>
         <tr><td style="padding:26px">
           <p style="margin:0 0 18px;font-size:15px;line-height:1.6">
             <strong>${esc(entry.subject)}</strong> passed the Proofwork gate.
           </p>
+          <p style="margin:0 0 18px;font-size:13px;line-height:1.6;color:#5c6f68">${esc(band.note)}</p>
           <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;font-size:14px;line-height:1.9;border-collapse:collapse">
             <tr><td style="color:#5c6f68;width:110px">Record</td><td style="font-family:ui-monospace,Menlo,monospace">${esc(entry.record_id)}</td></tr>
             <tr><td style="color:#5c6f68">Score</td><td><strong>${entry.integrity_score}/100</strong></td></tr>
@@ -101,7 +104,11 @@ export function renderCertificateEmail(entry, opts = {}) {
     </td></tr>
   </table>
 </body></html>`;
-    return { subject: `Proofwork CERTIFIED — ${entry.subject} (${entry.integrity_score}/100)`, text, html };
+    return {
+        subject: `Proofwork ${band.label} — ${entry.subject} (${entry.integrity_score}/100)`,
+        text,
+        html,
+    };
 }
 /**
  * Send the certificate for a passing record, once.

@@ -171,7 +171,9 @@ export function renderCertificateHtml(input) {
       <div class="verdict">
         <div class="vcell">
           <div class="k">Verdict</div>
-          <div class="v good">${esc(card.overall.band.toUpperCase())}</div>
+          <!-- The band already carries the 85 rule; the colour has to follow it,
+               or a provisional certificate is printed in the certified green. -->
+          <div class="v${card.overall.band === "certified" ? " good" : ""}">${esc(card.overall.band.toUpperCase())}</div>
         </div>
         <div class="vcell">
           <div class="k">Grade</div>

@@ -108,7 +108,10 @@ runs:
           exit 1
         fi
 
-        score=$(node -e "try{const r=require('${{ inputs.out }}/report.json');console.log(r.overall?.score??0)}catch{console.log(0)}")
+        # `overall.earned`, not `overall.score`. The report card has no `score`
+        # field, so this read undefined and every job summary said 0/100 beside a
+        # passing verdict — "PASS (0/100)" on the one line most people read.
+        score=$(node -e "try{const r=require('${{ inputs.out }}/report.json');console.log(r.overall?.earned??0)}catch{console.log(0)}")
         echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
         echo "score=$score" >> "$GITHUB_OUTPUT"
         echo "report=${{ inputs.out }}/report.txt" >> "$GITHUB_OUTPUT"

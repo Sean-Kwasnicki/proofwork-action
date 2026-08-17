@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { verifyRegistryEntry } from "../registry.js";
 import { describeBinding } from "../bundle.js";
+import { describeBand } from "../band.js";
 import { issuerPublicKey } from "../license.js";
 import { readLog } from "../registry.js";
 import { clearRevocationCache, fetchRevocationList, readRevocationList, revocationStatusFor, verifyRevocationList, writeRevocationList, REVOCATION_PATH, } from "../revocation.js";
@@ -118,6 +119,11 @@ const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replac
 export function verifyPage(recordId, r) {
     const ok = r.found && r.valid;
     const passed = r.entry?.verdict === "pass";
+    // The band, not the bare verdict. Printing CERTIFIED for anything that passed
+    // put that word on an 84/100 record whose own report card read PROVISIONAL.
+    const band = r.entry
+        ? describeBand({ verdict: r.entry.verdict, score: r.entry.integrity_score })
+        : null;
     // Revocation is named before anything else. "DOES NOT VERIFY" would be true but
     // misleading — it reads as tampering or a typo, when what happened is that the
     // issuer withdrew a record it had genuinely signed.
@@ -127,10 +133,10 @@ export function verifyPage(recordId, r) {
             ? "WITHDRAWN"
             : !r.valid
                 ? "DOES NOT VERIFY"
-                : passed
-                    ? "CERTIFIED"
-                    : "DENIED";
-    const tone = !ok ? "bad" : passed ? "ok" : "warn";
+                : (band?.label ?? "DENIED");
+    // Provisional is a pass, so it is not shown as a failure — but it is not shown
+    // in the same colour as certified either.
+    const tone = !ok ? "bad" : band?.certified ? "ok" : passed ? "warn" : "bad";
     // Named for what the record is actually bound to. Saying "the commit above" on
     // a bundle-bound record sends the reader looking for a git commit that does
     // not exist for this proof.
@@ -147,6 +153,9 @@ export function verifyPage(recordId, r) {
         ? [
             ["Issued to", r.entry.subject],
             ["Verdict", r.entry.verdict === "pass" ? "PASS" : "FAIL"],
+            // Both, because they answer different questions. The verdict is whether
+            // the gate blocked the run; the band is what the result may be called.
+            ["Band", band?.title ?? "—"],
             ["Integrity", `${r.entry.integrity_score}/100`],
             ["Assertions", r.entry.assertions],
             [describeBinding(r.entry).label, describeBinding(r.entry).value],

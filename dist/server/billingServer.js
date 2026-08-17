@@ -7,7 +7,7 @@ import { ledgerPayload } from "./ledger.js";
 import { handleDeposit } from "./deposit.js";
 import { deliverCertificate } from "../payments/certificateMail.js";
 import { fulfilWebhook, readFulfilments, webhookSecretFingerprint } from "../payments/fulfil.js";
-import { readRevocationList, republishRevocationList } from "../revocation.js";
+import { readRevocationList, republishRevocationList, verifyRevocationList } from "../revocation.js";
 import { createCheckoutSession, verifyWebhookSignature } from "../payments/checkout.js";
 import { resolveStripe } from "../payments/stripe.js";
 import { isPlausibleEmail } from "../account.js";
@@ -642,10 +642,37 @@ export function createBillingServer(opts = {}) {
  * this file that could not be recovered from.
  */
 export function ensureRevocationListPublished(file) {
-    if (readRevocationList(file))
-        return "already";
+    const existing = readRevocationList(file);
     try {
         const keys = loadOrCreateIssuerKeys();
+        if (existing) {
+            const verdict = verifyRevocationList(existing, keys.publicKeyPem);
+            if (verdict.ok)
+                return "already";
+            /**
+             * The list on disk was signed by a key we no longer hold.
+             *
+             * This happened in production: the first boot on an empty disk invented a
+             * keypair and published a list with it, and after the operator key was
+             * installed every verification reported "list was signed by 8cd46985…, but
+             * verification used ed4b438c…". A list that does not verify is treated as
+             * no list at all, so the withdrawal check silently stopped running — and
+             * the warning reads to a customer as though the certificate is suspect.
+             *
+             * Re-signing is only safe because the orphaned list is empty. Re-signing
+             * one that carried entries would launder withdrawals we cannot verify the
+             * provenance of, and a forged revocation is a denial-of-service against
+             * every certificate named in it. That case is refused and reported.
+             */
+            if ((existing.entries ?? []).length > 0)
+                return "orphaned";
+            republishRevocationList({
+                privateKeyPem: keys.privateKeyPem,
+                publicKeyPem: keys.publicKeyPem,
+                ...(file !== undefined ? { file } : {}),
+            });
+            return "re-signed";
+        }
         republishRevocationList({
             privateKeyPem: keys.privateKeyPem,
             publicKeyPem: keys.publicKeyPem,
@@ -678,10 +705,19 @@ export function main() {
             (published === "created"
                 ? `  Published an empty signed withdrawal list. Verifiers can now tell\n` +
                     `  "nothing is withdrawn" from "nobody has said".\n\n`
-                : published === "failed"
-                    ? `  Could not publish a withdrawal list. Verification still works; it\n` +
-                        `  will report the withdrawal check as not run.\n\n`
-                    : "") +
+                : published === "re-signed"
+                    ? `  Re-signed the withdrawal list with the current issuer key. The one on\n` +
+                        `  disk had been signed by a key this service no longer holds, so every\n` +
+                        `  verification was reporting the withdrawal check as untrusted.\n\n`
+                    : published === "orphaned"
+                        ? `  The withdrawal list on disk does not verify against the issuer key AND\n` +
+                            `  carries entries. It has NOT been re-signed: doing so would launder\n` +
+                            `  withdrawals whose provenance cannot be checked. Verification will\n` +
+                            `  report the withdrawal check as not run until this is resolved by hand.\n\n`
+                        : published === "failed"
+                            ? `  Could not publish a withdrawal list. Verification still works; it\n` +
+                                `  will report the withdrawal check as not run.\n\n`
+                            : "") +
             (secret === ""
                 ? `  STRIPE_WEBHOOK_SECRET is NOT set. Every webhook will be refused and\n` +
                     `  no licence will be issued. Set it before pointing Stripe here.\n\n`
