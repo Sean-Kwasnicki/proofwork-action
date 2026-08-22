@@ -4,10 +4,11 @@ import { blankDefinitions, existsInTree, findLine, keyValue, matchesInCode, rend
  *
  * ## The obligation
  *
- * EU AI Act Article 12 requires high-risk systems to technically allow the
- * automatic recording of events over their lifetime, at a level that makes the
- * system's functioning traceable. Article 19 requires providers to keep those
- * logs, with six months as the floor unless other law says longer.
+ * EU AI Act Article 12 will require high-risk systems to technically allow the
+ * automatic recording of events over their lifetime. That duty is **not generally
+ * in force until 2 December 2027** (Digital Omnibus). This check still runs: it
+ * records whether a durable sink exists in the tree, labelled as evidence for a
+ * delayed duty — never as "live now."
  *
  * ISO/IEC 42001 A.6.2.8 and NIST AI RMF MEASURE 2.8 ask for the same artefact
  * from different directions, and every enterprise security questionnaire asks for
@@ -47,9 +48,9 @@ import { blankDefinitions, existsInTree, findLine, keyValue, matchesInCode, rend
  */
 const FRAMEWORK_REFS = {
     eu: [
-        "Art. 12 Record-keeping",
-        "Art. 19 Automatically generated logs",
-        "Art. 26(6) Deployer log retention",
+        "Art. 12 Record-keeping (high-risk Annex III — delayed until 2027-12-02)",
+        "Art. 19 Automatically generated logs (same clock)",
+        "Art. 26(6) Deployer log retention (same clock)",
     ],
     iso42001: ["A.6.2.8 AI System Recording of Event Logs", "A.6.2.6 AI System Operation and Monitoring"],
     nist: ["MEASURE 2.8", "MANAGE 4.1"],

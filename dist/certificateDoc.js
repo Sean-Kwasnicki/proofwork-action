@@ -202,6 +202,7 @@ ${notAssessedNote(card)}
         software is safe, that its operator is compliant with any law, and it is not a conformity
         assessment under any statute. Proofwork is not an auditor and not a certification body.
         What this document provides is evidence; the determination remains with whoever is asking.
+        Legal conclusion: none. The word compliant does not apply to this certificate.
       </p>
 
       <div class="foot">

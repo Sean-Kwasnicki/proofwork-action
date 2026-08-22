@@ -4,6 +4,8 @@ import { buildGitContext } from "../gitContext.js";
 import { isUnderForeignTree, isForeignTree, isSourcePath, isTestPath } from "./testPaths.js";
 import { bareIgnoreBudget, Suppression } from "./ignoreDirective.js";
 import { stripNonCode } from "./sourceLexer.js";
+import { judgeTest } from "./assertionQuality.js";
+import { assertionsForTestBody } from "./assertionHelpers.js";
 /**
  * Workmanship -- did the agent actually finish, or does it only look finished?
  *
@@ -181,7 +183,7 @@ export function findHollowGoTests(file, text) {
  * satisfies a request for tests without testing anything, and unlike `it.skip`
  * it is invisible in a green test report.
  */
-export function findHollowTests(file, text) {
+export function findHollowTests(file, text, opts) {
     const findings = [];
     const suppress = new Suppression(bareIgnoreBudget(text));
     // Find test openers in code only. A repository that writes *about* tests — a
@@ -241,12 +243,14 @@ export function findHollowTests(file, text) {
         // An empty body is a placeholder, not a hollow assertion -- report it as such.
         if (!code.replace(/[\s"']/g, "").trim())
             continue;
-        if (!ASSERTION.test(code)) {
+        // Verdict is assertion quality, including assertions reached through a helper.
+        const judged = judgeTest(assertionsForTestBody(text, body, { file, root: opts?.root, files: opts?.files }), false);
+        if (judged.hollow) {
             findings.push({
                 file,
                 line: i + 1,
                 kind: "hollow_test",
-                detail: "test body contains no assertion -- it passes whatever the code does",
+                detail: judged.reason,
                 severity: "hard",
             });
         }
@@ -546,7 +550,7 @@ export function runWorkmanshipChecks(root, git, opts = {}) {
             else if (isGoFile(rel))
                 findings.push(...findHollowGoTests(rel, text));
             else
-                findings.push(...findHollowTests(rel, text));
+                findings.push(...findHollowTests(rel, text, { root }));
         }
         else {
             findings.push(...findSwallowedErrors(rel, text));

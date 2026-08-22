@@ -31,25 +31,34 @@ const PRIVATE_KEY_PATH = () => path.join(ISSUER_DIR(), "issuer-private.pem");
 const PUBLIC_KEY_PATH = () => path.join(ISSUER_DIR(), "issuer-public.pem");
 const ISSUED_LOG = () => path.join(ISSUER_DIR(), "issued.jsonl");
 const keyIdOf = (pub) => crypto.createHash("sha256").update(pub.replace(/\s+/g, "")).digest("hex").slice(0, 16);
+export function loadIssuerKeysIfPresent() {
+    if (!fs.existsSync(PRIVATE_KEY_PATH()) || !fs.existsSync(PUBLIC_KEY_PATH())) {
+        return null;
+    }
+    const publicKeyPem = fs.readFileSync(PUBLIC_KEY_PATH(), "utf8");
+    return {
+        publicKeyPem,
+        privateKeyPem: fs.readFileSync(PRIVATE_KEY_PATH(), "utf8"),
+        keyId: keyIdOf(publicKeyPem),
+        created: false,
+    };
+}
 /**
  * Load the issuer keypair, creating it once if absent.
  *
  * Rotation is deliberately not automatic. Replacing the key invalidates every
  * licence and every registry record ever signed with the old one, so it has to be
  * a decision someone makes on purpose, not something a stray command does.
+ *
+ * A customer-facing command must not call this. Grading creates no keys.
+ * `loadIssuerKeysIfPresent` is the function those paths use.
  */
 export function loadOrCreateIssuerKeys() {
+    const existing = loadIssuerKeysIfPresent();
+    if (existing)
+        return existing;
     const dir = ISSUER_DIR();
     fs.mkdirSync(dir, { recursive: true });
-    if (fs.existsSync(PRIVATE_KEY_PATH()) && fs.existsSync(PUBLIC_KEY_PATH())) {
-        const publicKeyPem = fs.readFileSync(PUBLIC_KEY_PATH(), "utf8");
-        return {
-            publicKeyPem,
-            privateKeyPem: fs.readFileSync(PRIVATE_KEY_PATH(), "utf8"),
-            keyId: keyIdOf(publicKeyPem),
-            created: false,
-        };
-    }
     const { publicKeyPem, privateKeyPem } = generateIssuerKeypair();
     fs.writeFileSync(PRIVATE_KEY_PATH(), privateKeyPem, "utf8");
     fs.writeFileSync(PUBLIC_KEY_PATH(), publicKeyPem, "utf8");

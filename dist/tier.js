@@ -2,9 +2,9 @@ export const CAPABILITIES = {
     free: {
         tier: "free",
         label: "Free evaluation",
-        basicGateOnly: true,
-        showFindings: false,
-        showRemediation: false,
+        basicGateOnly: false,
+        showFindings: true,
+        showRemediation: true,
         ledgered: false,
         issuesCertificate: false,
     },
@@ -28,11 +28,15 @@ export const CAPABILITIES = {
     },
 };
 /**
- * The twelve foundational assertions the free gate runs.
+ * The twelve conditions the free tier still *advertises* as the floor.
  *
- * Chosen so that a free FAIL is always a genuine problem — never a warning about
- * something optional. A free tier that cries wolf teaches people the paid tier
- * cries wolf too, and we would be paying to train our own market to ignore us.
+ * The free run is the full gate. This list is the one-screen description, not
+ * the set of families that decide the verdict. `applyFreeGate` filters to it
+ * for that description. Calling it from `applyTier` would hide a finding a
+ * senior needs in order to keep the Action installed.
+ *
+ * Chosen so that a free FAIL, even described at this floor, is always a genuine
+ * problem — never a warning about something optional.
  */
 export const FREE_GATE_CHECKS = [
     "integrity.fake_green",
@@ -89,6 +93,7 @@ export const FREE_GATE_SCOPE = [
 const FAMILY_LABEL = {
     "integrity.fake_green": "faked or skipped tests",
     "integrity.workmanship": "hollow tests and discarded errors",
+    "integrity.change_test_bind": "production change unbound to a constraining test",
     "integrity.verification": "whether a test suite exists at all",
     "integrity.reintroduction": "deleted code quietly returning",
     "integrity.grader": "edits to the gate's own rules",
@@ -110,13 +115,14 @@ const countFailures = (checks) => checks.filter((c) => c.status === "fail").leng
 export function applyFreeGate(checks) {
     return checks.filter((c) => FREE_GATE_CHECKS.some((id) => c.id === id));
 }
+const UNSIGNED_WITHHELD = [
+    "a verifiable certificate bound to this exact commit",
+    "a registry entry a third party can check without trusting you",
+    "the badge for your repository, site, and profile",
+];
 /**
- * Strip a proof down to what the tier may see.
- *
- * For the free tier this returns no proof object at all, rather than a proof with
- * blanked fields. A redacted structure invites reconstruction — field names,
- * array lengths, and ordering leak most of what was redacted. Withholding the
- * object is the only version that actually withholds.
+ * Attach the commercial boundary to a proof: findings stay, the citable
+ * record does not, unless this tier is allowed to issue one.
  */
 export function applyTier(proof, tier) {
     const cap = CAPABILITIES[tier];
@@ -130,26 +136,26 @@ export function applyTier(proof, tier) {
     const notExamined = proof.checks
         .filter((c) => c.status === "skip" && FAMILY_LABEL[c.id])
         .map((c) => FAMILY_LABEL[c.id]);
-    if (!cap.basicGateOnly && cap.showFindings) {
+    const withheld = cap.ledgered && cap.issuesCertificate ? [] : [...UNSIGNED_WITHHELD];
+    if (cap.showFindings) {
+        const scoped = cap.basicGateOnly ? applyFreeGate(proof.checks) : proof.checks;
+        const ok = cap.basicGateOnly ? countFailures(scoped) === 0 : proof.ok;
         return {
             tier,
-            ok: proof.ok,
+            ok,
             proof,
-            verdict: proof.ok
+            verdict: ok
                 ? `PASS — ${proof.summary.passed} checks clear, integrity ${proof.integrity_score ?? 0}/100`
                 : `FAIL — ${proof.summary.failed} blocking finding(s), integrity ${proof.integrity_score ?? 0}/100`,
-            withheld: [],
+            withheld,
             summary: proof.summary,
             notExamined,
         };
     }
+    // Unreachable for the shipped tiers — kept so a future redaction cannot
+    // silently return a proof object with blanked fields.
     const scoped = applyFreeGate(proof.checks);
-    const failed = countFailures(scoped);
-    const ok = failed === 0;
-    // A free PASS is qualified whenever something in scope did not run. "PASS" on
-    // its own invites the reader to supply the word "everything", and the gap
-    // between "nothing was found" and "nothing was looked for" is the whole
-    // difference between a useful gate and a false one.
+    const ok = countFailures(scoped) === 0;
     const qualified = ok && notExamined.length > 0;
     return {
         tier,
@@ -159,24 +165,16 @@ export function applyTier(proof, tier) {
                 ? "PASS (limited) — cleared every check that could run; some could not."
                 : "PASS — this change clears the foundational gate."
             : "FAIL — this change does not clear the foundational gate.",
-        withheld: ok
-            ? [
-                "a verifiable certificate bound to this exact commit",
-                "a registry entry a third party can check without trusting you",
-                "the badge for your repository, site, and profile",
-                "the file and line behind every finding, and how to fix each one",
-            ]
-            : [
-                "which gate failed, and the file and line it failed on",
-                "the remediation steps for each finding",
-                "the severity of each finding and what it means about the agent",
-            ],
+        withheld,
         notExamined,
     };
 }
-/** The free result, rendered. Deliberately gives away nothing beyond the verdict. */
+/**
+ * Free-tier rendering. Findings print. The registry sentence is the upsell.
+ */
 export function renderFreeResult(r) {
     const rule = "─".repeat(58);
+    const findings = (r.proof?.checks ?? []).filter((c) => c.status === "fail" || c.status === "warn");
     const lines = [
         "",
         `  PROOFWORK — free evaluation`,
@@ -187,15 +185,13 @@ export function renderFreeResult(r) {
         "",
         `  ${rule}`,
         "",
-        r.ok
-            ? "  Your agent's work cleared every check that could run. That is a real"
-            : "  Something in this change did not clear the foundational gate.",
-        r.ok
-            ? "  result — but it is a result only you can see."
-            : "  It is a genuine finding, not a warning about style.",
-        "",
-        // Printed before the upsell, deliberately. A reader who stops after the
-        // verdict must still have seen what was not looked at.
+        ...(findings.length
+            ? [
+                "  Findings:",
+                ...findings.map((c) => `    · ${c.id}  ${c.detail}`),
+                "",
+            ]
+            : []),
         ...(r.notExamined.length
             ? [
                 "  NOT EXAMINED — these could not run on this repository, so this",
@@ -206,10 +202,6 @@ export function renderFreeResult(r) {
             : []),
         "  Not included at this tier:",
         ...r.withheld.map((w) => `    · ${w}`),
-        "",
-        "  The free gate covers these conditions in full — the money, people, and",
-        "  takeover checks are not held back:",
-        ...FREE_GATE_SCOPE.map((s) => `    · ${s}`),
         "",
         "  Free runs are never written to the registry. Nothing here can be",
         "  cited as evidence to anyone else — by design.",

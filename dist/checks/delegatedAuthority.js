@@ -42,14 +42,14 @@ import { findAgentFiles } from "./agentSecurity.js";
  * carefully the rest of it is written — because there is no amount of code
  * quality that substitutes for consent.
  *
- * Evidences EU AI Act Art. 14 (human oversight), NIST AI RMF MANAGE 2.4, and
+ * Evidences EU AI Act Art. 14 (human oversight — high-risk, from Dec 2027), NIST AI RMF MANAGE 2.4, and
  * OWASP ASI03 (agent identity and privilege abuse).
  */
 const FRAMEWORK_REFS = {
     owasp_asi: ["ASI03", "ASI10"],
     iso42001: ["A.9.2 Processes for Responsible Use of AI Systems"],
     nist: ["MANAGE 2.4", "GOVERN 1.3"],
-    eu: ["Art. 14 Human Oversight"],
+    eu: ["Art. 14 Human Oversight (high-risk — delayed until 2027-12-02)"],
 };
 const MAX_BYTES = 512 * 1024;
 /* ══════════════════════════════════ spending the owner's authority ═══ */

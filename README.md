@@ -53,8 +53,7 @@ no certificate and adds no ledger row.
     fetch-depth: 0
 - uses: Sean-Kwasnicki/proofwork-action@v1
   with:
-    subject: "Your Company Ltd"
-    license-key: ${{ secrets.PROOFWORK_LICENSE }}
+    fail-on: never
 ```
 
 ## What leaves your repository
@@ -67,9 +66,9 @@ the score, four totals, the commit, and a hash of the tree. The issuer refuses
 a deposit carrying source-shaped fields rather than stripping them, so that
 promise cannot quietly stop being true.
 
-Without a licence key the Action runs the free gate: a real verdict, with the
-findings withheld. With one, the report card names every finding and how to
-clear it.
+Without a licence key the Action runs the same gate and prints every
+finding with file and line. A licence is required only to deposit a
+signed public record.
 
 ## What is in this repository
 

@@ -16,22 +16,22 @@ const WORKFLOW = `name: Proofwork
 
 on:
   pull_request:
-  push:
-    branches: [main, master]
 
 jobs:
-  proof:
+  gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      # Private Proofwork — repo secret PROOFWORK_CLONE_TOKEN (read access)
-      - uses: Sean-Kwasnicki/proofwork@main
+      # Public compiled Action. Pin by commit SHA before enforcing.
+      # gh api repos/Sean-Kwasnicki/proofwork-action/commits/v1 --jq .sha
+      - uses: Sean-Kwasnicki/proofwork-action@v1
         with:
-          root: \${{ github.workspace }}
-          clone-token: \${{ secrets.PROOFWORK_CLONE_TOKEN }}
-          strict: "true"
+          fail-on: never
 `;
 const CONFIG = `{
   "failOnWarn": true,
@@ -167,17 +167,34 @@ export function initProofwork(root, opts = {}) {
     writeIfMissing(path.join(dir, "README.md"), `# Proofwork local state
 
 - \`latest.json\` / \`latest-brief.txt\` / \`latest-story.txt\` — last Proof
-- \`ledger.json\` — agent failure/loop events
-- \`deleted-fingerprints.json\` — anti-reintroduction store
-- \`ACCEPTANCE.json\` — last \`proofwork accept\` report
-- \`install.json\` — where the engine lives (PROOFWORK_HOME)
+- artefacts from \`proofwork report\` — not written into git
 
-Delivery is not complete until \`proofwork accept\` exits 0.
+The Action on a pull request is the install. Cursor hooks and MCP are opt-in:
+\`proofwork init --editor\`.
 `, created, skipped, ".proofwork/README.md");
+    const gi = path.join(root, ".gitignore");
+    if (fs.existsSync(gi)) {
+        const text = fs.readFileSync(gi, "utf8");
+        if (!text.includes(".proofwork/latest.json")) {
+            fs.appendFileSync(gi, `\n${DEFAULT_GITIGNORE_SNIPPET}\n`, "utf8");
+            created.push(".gitignore (Proofwork snippet appended)");
+        }
+        else {
+            skipped.push(".gitignore (already configured)");
+        }
+    }
+    else {
+        fs.writeFileSync(gi, `${DEFAULT_GITIGNORE_SNIPPET}\n`, "utf8");
+        created.push(".gitignore");
+    }
+    writeIfMissing(path.join(root, ".github", "workflows", "proofwork.yml"), WORKFLOW, created, skipped, ".github/workflows/proofwork.yml");
+    if (!opts.editor) {
+        return { created, skipped };
+    }
     const installPath = path.join(dir, "install.json");
     const installBody = {
         version: 1,
-        mode: "private-early-access",
+        mode: "editor-surface",
         installed_at: new Date().toISOString(),
         proofwork_home: opts.proofworkHome ? path.resolve(opts.proofworkHome) : process.env.PROOFWORK_HOME || null,
         bar: {
@@ -208,22 +225,6 @@ Delivery is not complete until \`proofwork accept\` exits 0.
     }
     writeIfMissing(path.join(root, "proofwork.config.json"), CONFIG, created, skipped, "proofwork.config.json");
     writeIfMissing(path.join(root, ".proofwork", "policy.json"), POLICY, created, skipped, ".proofwork/policy.json");
-    const gi = path.join(root, ".gitignore");
-    if (fs.existsSync(gi)) {
-        const text = fs.readFileSync(gi, "utf8");
-        if (!text.includes(".proofwork/latest.json")) {
-            fs.appendFileSync(gi, `\n${DEFAULT_GITIGNORE_SNIPPET}\n`, "utf8");
-            created.push(".gitignore (Proofwork snippet appended)");
-        }
-        else {
-            skipped.push(".gitignore (already configured)");
-        }
-    }
-    else {
-        fs.writeFileSync(gi, `${DEFAULT_GITIGNORE_SNIPPET}\n`, "utf8");
-        created.push(".gitignore");
-    }
-    writeIfMissing(path.join(root, ".github", "workflows", "proofwork.yml"), WORKFLOW, created, skipped, ".github/workflows/proofwork.yml");
     const cliHelper = resolveCliSnippet();
     const sessionHook = `${cliHelper}
 const r = runProofwork(["status"]);

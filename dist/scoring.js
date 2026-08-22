@@ -1,3 +1,4 @@
+import { bandFor as publicBand } from "./invariants/publicClaims.js";
 const PROFILES = {
     consent: {
         first: 45,
@@ -122,6 +123,8 @@ export function classifyCheck(id) {
         return "deception";
     if (id.startsWith("integrity.workmanship"))
         return "incomplete";
+    if (id.startsWith("integrity.change_test_bind"))
+        return "incomplete";
     // No verification mechanism is incomplete work rather than deception: in the
     // ordinary case the agent simply did not write tests. The placeholder-script
     // variant is closer to a false signal, but one check id carries one class, and
@@ -234,14 +237,18 @@ export function scoreByCategory(checks) {
         const id = categoryOf(c.id);
         return id === null || !excluded.has(id);
     });
-    const skipped = considered.filter((c) => c.status === "skip").length;
-    const ratio = considered.length === 0 ? 0 : (considered.length - skipped) / considered.length;
+    // Skip means the duty was not engaged. It is a gap in the authority packet,
+    // not a surface that "could not be examined". Unexamined must warn or fail.
+    // Counting skip here was N/A theater: unused families pushed honest apps
+    // below Certified.
+    const live = considered.filter((c) => c.status !== "skip");
+    const ratio = live.length === 0 ? 0 : 1;
     return {
         categories,
         subtotal: Math.round(categories.reduce((s, c) => s + c.earned, 0) * 10) / 10,
         coverageCap: Math.round(55 + 45 * ratio),
-        examined: considered.length - skipped,
-        considered: considered.length,
+        examined: live.length,
+        considered: live.length,
     };
 }
 /**
@@ -253,7 +260,7 @@ export function scoreByCategory(checks) {
  * tables in the corresponding modules.
  */
 const ASSERTIONS_PER_CHECK = {
-    "integrity.fake_green": 37,
+    "integrity.fake_green": 38,
     // 14, and here is every one so the number can be checked rather than believed:
     // test-opener recognition; body-asserts-nothing; empty-placeholder exclusion;
     // inline ignore; next-line ignore; empty catch; catch-only console.log/.error/
@@ -264,7 +271,8 @@ const ASSERTIONS_PER_CHECK = {
     // test-script detection, runner discovery, coverage-ratio floor, and
     // comment/blank exclusion when measuring code.
     "integrity.verification": 12,
-    "integrity.workmanship": 14,
+    "integrity.workmanship": 20,
+    "integrity.change_test_bind": 4,
     "integrity.reintroduction": 4,
     "integrity.spend_loop": 3,
     "integrity.grader": 19,
@@ -336,17 +344,7 @@ export function assertionsRun(checks) {
  *
  * A run the gate refused is not certified, whatever it scored.
  */
-const bandFor = (score, hasConsentFinding, gatePassed) => {
-    if (hasConsentFinding)
-        return "denied";
-    if (!gatePassed)
-        return score >= 60 ? "provisional" : "denied";
-    if (score >= 85)
-        return "certified";
-    if (score >= 60)
-        return "provisional";
-    return "denied";
-};
+const bandFor = (score, hasConsentFinding, gatePassed) => publicBand(gatePassed, score, hasConsentFinding);
 export function scoreProof(proof) {
     const checks = proof.checks;
     const problems = checks.filter((c) => c.status === "fail" || c.status === "warn");

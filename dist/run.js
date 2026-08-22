@@ -14,6 +14,7 @@ import { runDisclosureChecks } from "./checks/regulatory/disclosure.js";
 import { runRecordKeepingChecks } from "./checks/regulatory/recordKeeping.js";
 import { runAutomatedDecisionChecks } from "./checks/regulatory/automatedDecision.js";
 import { runWorkmanshipChecks } from "./checks/workmanship.js";
+import { runChangeTestBindChecks } from "./checks/changeTestBind.js";
 import { loadConfig } from "./config.js";
 import { buildGitContext } from "./gitContext.js";
 import { attachStory } from "./report.js";
@@ -67,6 +68,7 @@ export function runProof(opts) {
         // Work that runs but does not do what it appears to: hollow tests, discarded
         // errors, unfinished markers. The failures an agent commits without meaning to.
         checks.push(...runWorkmanshipChecks(opts.root, git, { strict }));
+        checks.push(...runChangeTestBindChecks(opts.root, git));
         checks.push(...runSpendLoopChecks(opts.root, {
             maxIdenticalFailures: config.maxIdenticalFailures,
         }));

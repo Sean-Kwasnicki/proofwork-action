@@ -18,8 +18,9 @@ inputs:
   license-key:
     description: >-
       Proofwork licence key. Without one the run uses the free gate, which
-      returns a verdict but withholds the findings. Store it as a repository
-      secret — never inline in the workflow.
+      returns the same verdict and the same findings. A licence is required
+      to deposit a signed public record. Store it as a repository secret —
+      never inline in the workflow.
     required: false
     default: ""
   fail-on:
@@ -89,11 +90,13 @@ runs:
         set -uo pipefail
         node "${{ github.action_path }}/dist/cli.js" report \
           --root "${{ inputs.root }}" \
+          --out "${{ inputs.out }}" \
           ${{ inputs.subject && format('--subject "{0}"', inputs.subject) || '' }} \
           --json > "${{ inputs.out }}/report.json" 2>"${{ inputs.out }}/report.err" || true
 
         node "${{ github.action_path }}/dist/cli.js" report \
           --root "${{ inputs.root }}" \
+          --out "${{ inputs.out }}" \
           ${{ inputs.subject && format('--subject "{0}"', inputs.subject) || '' }} \
           | tee "${{ inputs.out }}/report.txt"
         code=${PIPESTATUS[0]}

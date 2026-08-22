@@ -7,7 +7,8 @@ import { runCertify } from "./certify.js";
 import { certificateId, writeCertificateDoc } from "./certificateDoc.js";
 import { buildReportCard, renderReportCard } from "./reportCard.js";
 import { scoreProof } from "./scoring.js";
-import { currentEntitlement, storeLicense, verifyLicense } from "./license.js";
+import { writeConductArtifacts, verifyConductFile, CONDUCT_SCHEMA } from "./authority/conductRecord.js";
+import { currentEntitlement, issuerPublicKey, storeLicense, verifyLicense } from "./license.js";
 import { issueCredential, issueDeniedRecord, issuedCredentials, verifyCredentialFile } from "./credential.js";
 import { allSignups, loadAccount, renderSignup, signOut, signUp } from "./account.js";
 import { writeBadges } from "./badgeDoc.js";
@@ -22,7 +23,6 @@ import { deliverCertificate } from "./payments/certificateMail.js";
 import { buildDepositPayload, requestOidcToken, sendDeposit } from "./ci/deposit.js";
 import { DEPOSIT_AUDIENCE } from "./server/deposit.js";
 import { readRevocationList, renderRevocationList, republishRevocationList, revokeRecord, } from "./revocation.js";
-import { applyTier, renderFreeResult } from "./tier.js";
 import { renderStripeStatus, resolveStripe, stripeStatus } from "./payments/stripe.js";
 import { renderTestCharge, runTestCharge } from "./payments/checkout.js";
 import { appendLedgerEvent } from "./checks/spendLoop.js";
@@ -43,7 +43,7 @@ Usage:
 
   proofwork status [--root <dir>] [--json]
   proofwork doctor [--root <dir>]
-  proofwork init [--root <dir>] [--home <proofwork-clone>]
+  proofwork init [--root <dir>] [--editor] [--home <proofwork-clone>]
   proofwork accept [--root <dir>] [--json]
   proofwork signup --email <you@co.com> [--name <n>] [--org <o>]
   proofwork whoami
@@ -59,6 +59,7 @@ Usage:
   proofwork report [--root <dir>] [--json] [--subject <name>]
   proofwork certificate [--root <dir>] [--subject <name>] [--repo <id>] [--out <dir>]
   proofwork verify <record.json> [--json]
+      Registry credential or authority conduct.json — no source required.
   proofwork publish <record.json>     needs PROOFWORK_VERIFY_URL
   proofwork vault [--html] [--json]
   proofwork fleet [--root <dir-of-repos>] [--json]
@@ -77,9 +78,9 @@ Commands:
   status              Fast agent brief (same as check --fast --quiet)
   doctor              Explain fails/warns with fix hints (install / CI debugging)
   explain             Plain-English PASS/FAIL meaning for humans
-  init                Scaffold paid-install surface (hooks, MCP, Action, strict config)
+  init                Write the public Action (fail-on: never). --editor adds Cursor hooks
   accept              Customer acceptance gate — install incomplete until exit 0
-  signup              Create your account — required even on the free tier
+  signup              Create a local profile (optional; the Action does not need one)
   whoami              Show the account and tier this machine is using
   signout             Remove the local account
   activate            Install a licence key on this machine (customer side)
@@ -110,6 +111,7 @@ Flags:
   --fast              Skip slow local probes (gh auth, agentsaver); integrity still runs
   --strict            Soft fake-green findings FAIL (max-capacity bar); also via config.strictIntegrity
   --home              Path to built Proofwork clone (written to .proofwork/install.json)
+  --editor            init only: write Cursor hooks, MCP, and AGENTS.md
   --compact           Minified JSON (lowest agent parse latency); implied with PROOFWORK_COMPACT=1
   --quiet             One brief (+ blockers); for hooks/agents
 `);
@@ -127,6 +129,7 @@ function parseArgs(argv) {
         strictAuth: false,
         readinessOnly: false,
         proofworkHome: process.env.PROOFWORK_HOME || "",
+        editor: false,
         ledgerType: "note",
         ledgerName: "",
         ledgerDetail: "",
@@ -356,6 +359,8 @@ function parseArgs(argv) {
             args.readinessOnly = true;
         else if (a === "--home")
             args.proofworkHome = path.resolve(argv[++i] ?? "");
+        else if (a === "--editor")
+            args.editor = true;
         else if (a === "--subject")
             args.subject = argv[++i] ?? "";
         else if (a === "--repo")
@@ -457,7 +462,7 @@ function runDoctor(root) {
         n += 1;
     }
     if (n === 0) {
-        console.log("- All clear. Use proofwork status in hooks; wire Action with clone-token (INSTALL.md).");
+        console.log("- All clear. Add Sean-Kwasnicki/proofwork-action@v1 with fail-on: never (docs/INSTALL.md).");
     }
     else if (proof.checks.some((c) => c.status === "fail")) {
         // The route out, for someone who does not write the code themselves.
@@ -511,6 +516,7 @@ function writeProofFiles(root, out, proof, compact) {
     if (proof.story) {
         fs.writeFileSync(path.join(dir, "latest-story.txt"), `${proof.story}\n`, "utf8");
     }
+    writeConductArtifacts(dir, proof, { subject: path.basename(root) });
     return outPath;
 }
 function runCheck(args) {
@@ -617,13 +623,20 @@ async function main() {
     if (args.command === "init") {
         const result = initProofwork(args.root, {
             proofworkHome: args.proofworkHome || undefined,
+            editor: args.editor,
         });
         console.log("Proofwork init complete");
         for (const c of result.created)
             console.log(`  [created] ${c}`);
         for (const s of result.skipped)
             console.log(`  [skipped] ${s}`);
-        console.log("Next: proofwork accept --root <dir>  (must exit 0)");
+        if (args.editor) {
+            console.log("Next: proofwork accept --root <dir>  (must exit 0)");
+        }
+        else {
+            console.log("Next: open a pull request. fail-on is never until you change it.");
+            console.log("      Pin the Action by SHA before enforcing. --editor adds Cursor hooks.");
+        }
         process.exit(0);
     }
     if (args.command === "accept") {
@@ -875,33 +888,32 @@ async function main() {
             root: args.root, fast: args.fast, strict: args.strict, bundle: args.bundleMode,
         });
         const entitlement = currentEntitlement();
-        // The report card is the paid product. On the free tier the run still
-        // happens in full — the customer gets a real verdict — but the breakdown is
-        // withheld, because the breakdown is what they would be buying.
-        if (entitlement.tier === "free") {
-            const free = applyTier(proof, "free");
-            process.stdout.write(renderFreeResult(free));
-            // Exit on the verdict the customer was actually shown.
-            //
-            // Using `proof.ok` here printed "PASS" and exited 2, because the full audit
-            // had findings outside the twelve free conditions. A CI job would have
-            // blocked a run our own output called a pass — and the customer cannot see
-            // why, since the detail is exactly what the free tier withholds. Reporting
-            // one verdict and acting on another is the failure mode this product exists
-            // to catch.
-            process.exit(free.ok ? 0 : 2);
-        }
         const subject = args.subject || path.basename(args.root);
         const card = buildReportCard(proof, subject);
+        /**
+         * Conduct artefacts go where the caller asked, or to the operator cwd.
+         * They never go into the graded tree, and under `PROOFWORK_READONLY`
+         * they are not written at all unless `--out` named a destination.
+         * The Action's working directory *is* the graded repository; writing
+         * `.proofwork/` there is the bug this product already shipped twice.
+         */
+        const readOnly = process.env.PROOFWORK_READONLY === "1";
+        const reportDir = args.out ? args.out : readOnly ? "" : path.join(process.cwd(), ".proofwork");
+        if (reportDir)
+            writeConductArtifacts(reportDir, proof, { subject });
         if (args.json) {
             process.stdout.write(`${JSON.stringify(card, null, 2)}\n`);
         }
         else {
             process.stdout.write(renderReportCard(card));
+            if (entitlement.tier === "free") {
+                process.stdout.write("\n  This run is not written to the registry. Activate a licence to issue a signed record.\n");
+            }
         }
         // A report card is information, not a gate. It exits non-zero on a failing
         // run so CI still blocks, but the card prints either way — a customer who
-        // failed is exactly the one who needs to read it.
+        // failed is exactly the one who needs to read it. Free and paid print the
+        // same card. The licence buys the citable record, not the line number.
         process.exit(proof.ok ? 0 : 2);
     }
     if (args.command === "certificate") {
@@ -923,6 +935,9 @@ async function main() {
          * defaults to where they are standing and moves with `--out`.
          */
         const artifactDir = args.out || path.join(process.cwd(), ".proofwork");
+        const conduct = writeConductArtifacts(artifactDir, proof, {
+            subject: args.subject || path.basename(args.root),
+        });
         if (!proof.ok) {
             console.error("Not certified — no certificate issued.");
             console.error("");
@@ -959,6 +974,7 @@ async function main() {
                 console.error(`  A signed DENIED record was issued: ${denied.entry.record_id}`);
                 console.error(`  ${denied.recordPath}`);
                 console.error(`  It verifies like a certificate and cannot be edited into a pass.`);
+                console.error(`  Conduct record (authority edition, includes DENIED): ${conduct.jsonPath}`);
             }
             catch (e) {
                 // No private key means this is a customer machine, which is normal.
@@ -982,6 +998,7 @@ async function main() {
             assertions: score.assertions,
         }, artifactDir);
         console.log(`Certificate written to ${file}`);
+        console.log(`  conduct ${conduct.jsonPath}`);
         console.log(`  id      ${certificateId(proof)}`);
         console.log(`  grade   ${buildReportCard(proof).overall.grade} · ${score.final}/100`);
         // Named by what it actually is. Printing "commit unbound" for a bundle-bound
@@ -1065,6 +1082,28 @@ async function main() {
         if (!args.recordFile) {
             process.stderr.write("Usage: proofwork verify <record.json>\n");
             process.exit(1);
+        }
+        const raw = fs.readFileSync(args.recordFile, "utf8");
+        let parsed;
+        try {
+            parsed = JSON.parse(raw);
+        }
+        catch {
+            process.stderr.write("Not JSON.\n");
+            process.exit(1);
+        }
+        if (parsed.schema === CONDUCT_SCHEMA) {
+            const pub = issuerPublicKey();
+            if (!pub) {
+                process.stderr.write("No issuer public key — cannot verify a conduct packet.\n");
+                process.exit(1);
+            }
+            const result = verifyConductFile(args.recordFile, pub);
+            if (args.json)
+                process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+            else
+                process.stdout.write(result.summary);
+            process.exit(result.ok ? 0 : 1);
         }
         const result = verifyCredentialFile(args.recordFile);
         /**

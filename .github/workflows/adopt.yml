@@ -1,0 +1,27 @@
+name: Proofwork adopt
+
+# How a senior installs this: reporting mode on a TypeScript app, no licence.
+# fail-on is never. The report lands. The job stays green.
+# Pin by SHA and set fail-on: denied after the findings have been honest.
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./
+        with:
+          root: pass-app
+          subject: "pass-app"
+          fail-on: never
+          comment: true

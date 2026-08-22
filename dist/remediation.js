@@ -251,6 +251,18 @@ const REMEDIATIONS = {
         verify: "Re-run `proofwork check`. Then break the code under test deliberately and confirm the test now fails — a test that passes either way was never testing anything.",
         reference: "ISO/IEC 42001 A.6.2.4 · NIST AI RMF MEASURE 2.5",
     },
+    "integrity.change_test_bind": {
+        summary: "A substantial production change is not bound to a constraining test.",
+        why: "An agent can add a function, leave tests pointing at a different module, and still look finished. " +
+            "The gate does not run the suite. It asks whether a test imports this file or names an export and asserts a result.",
+        steps: [
+            "Open the file:symbol listed in the finding.",
+            "Add or extend a test that imports that module and asserts a real result (not expect(true), not toBeDefined alone).",
+            "Re-run the gate on the same commit.",
+        ],
+        verify: "Re-run `proofwork check`. The change-bind check should pass, and hollow-test should stay clear.",
+        reference: "ISO/IEC 42001 A.6.2.4 · NIST AI RMF MEASURE 2.5",
+    },
     "integrity.reintroduction": {
         summary: "Code that was deliberately deleted has reappeared in the working tree.",
         why: "Deletions are decisions. When an agent restores one — usually while 'fixing' something " +
