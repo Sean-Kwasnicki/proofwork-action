@@ -3,10 +3,30 @@
 An independent merge gate for code written by AI agents. It runs on **your**
 runner, against **your** checkout, and reports a verdict.
 
+## Install — the gate, reporting mode
+
+Twelve lines. No licence. Read two weeks of pull requests, then set
+`fail-on: denied` if the findings are real.
+
+```yaml
+# Two weeks of report cards. Then fail-on: denied.
+name: proofwork
+on: [pull_request]
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    permissions: { contents: read, pull-requests: write }
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: Sean-Kwasnicki/proofwork-action@ec95f5a
+        with: { fail-on: never }
+```
+
 ## Certificate, verify link and public ledger row
 
-Use the reusable workflow. This is the only route to a signed public record —
-one block, nothing else to install, and nobody at Proofwork involved.
+A signed integrity record is a later step and a licence. Use the reusable
+workflow — the only route to a public record, and not how you adopt the gate.
 
 ```yaml
 name: Proofwork
@@ -41,20 +61,6 @@ That is also why the job needs `id-token: write` on the caller — GitHub will
 not let the reusable workflow request it unless the workflow that called it
 grants it. The snippet above does. Without it the gate still runs and still
 blocks a bad merge; there is simply no record.
-
-## Gate only
-
-Use the Action directly when you want the check and no publishing. It issues
-no certificate and adds no ledger row.
-
-```yaml
-- uses: actions/checkout@v4
-  with:
-    fetch-depth: 0
-- uses: Sean-Kwasnicki/proofwork-action@v1
-  with:
-    fail-on: never
-```
 
 ## What leaves your repository
 
