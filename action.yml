@@ -111,10 +111,11 @@ runs:
           exit 1
         fi
 
-        # `overall.earned`, not `overall.score`. The report card has no `score`
-        # field, so this read undefined and every job summary said 0/100 beside a
-        # passing verdict — "PASS (0/100)" on the one line most people read.
-        score=$(node -e "try{const r=require('${{ inputs.out }}/report.json');console.log(r.overall?.earned??0)}catch{console.log(0)}")
+        # Read the file as a path. require('proofwork-out/report.json') looks up
+        # a package named proofwork-out, throws, and the catch printed 0.
+        # pass-app scored 100; the job summary said PASS (0/100).
+        score=$(node -e "const fs=require('fs');const r=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));console.log(r.overall.earned)" "${{ inputs.out }}/report.json")
+        test -n "$score" || { echo "::error::Could not read overall.earned from the report card."; exit 1; }
         echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
         echo "score=$score" >> "$GITHUB_OUTPUT"
         echo "report=${{ inputs.out }}/report.txt" >> "$GITHUB_OUTPUT"
